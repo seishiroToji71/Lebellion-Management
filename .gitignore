@@ -1,3 +1,33 @@
-graphify-out/
+# Secrets — ignore all env files, track only the example
 .env
 .env.*
+!.env.example
+
+# Gradle
+.gradle/
+backend/build/
+backend/.gradle/
+**/build/
+!**/src/main/**/build/
+!**/src/test/**/build/
+
+# IntelliJ IDEA
+.idea/
+*.iws
+*.iml
+*.ipr
+out/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Docker local overrides
+infra/docker-compose.override.yml
+
+# Graphify output
+graphify-out/

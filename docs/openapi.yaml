@@ -1,0 +1,37 @@
+openapi: "3.1.0"
+info:
+  title: Lebellion Management API
+  description: Checklist & KPI inspection system for restaurant chains
+  version: "0.1.0"
+  contact:
+    name: Lebellion
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      operationId: getHealth
+      tags:
+        - System
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
