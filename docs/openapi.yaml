@@ -1,22 +1,108 @@
 openapi: "3.1.0"
 info:
   title: Lebellion Management API
-  description: Checklist & KPI inspection system for restaurant chains
-  version: "0.1.0"
+  description: |
+    Checklist & KPI inspection system for restaurant chains.
+
+    ## Phase 1 — authentication & roles
+    - Organization registration by a Founder.
+    - Founder / Branch Manager login by email OR phone + password.
+    - Employee / Branch Manager join by a one-time, TTL-limited invite code bound to an
+      organization and a branch (and a unit for employees).
+    - JWT access token (~15 min) + rotating refresh token with theft detection.
+
+    ## Versioning & client gating
+    - All endpoints live under `/api/v1` (except `/health`, which is unversioned for infra
+      monitoring and is exempt from client-version gating).
+    - Every `/api/v1` request MUST send the `X-App-Version` header (semver of the client app).
+      Requests from an unsupported/too-old client are rejected with `426 UPGRADE_REQUIRED`
+      before any business logic runs. The minimum supported version is a server config value.
+
+    ## Security notes reflected in this contract
+    - Passwords are never returned or logged. Minimum length is 10 characters.
+    - **Registration gating:** `POST /auth/register` is disabled by default and controlled by
+      the `REGISTRATION_ENABLED` env flag; self-serve onboarding is opened deliberately. When
+      disabled it returns `403 REGISTRATION_DISABLED`.
+    - Access tokens are short-lived JWTs; refresh tokens are opaque, high-entropy strings.
+      The server stores only a hash of each refresh token.
+    - **Immediate access revocation:** every access token carries a `tokenVersion` claim that is
+      checked against the user row on each request. Deactivating a user (or otherwise bumping
+      their `tokenVersion`) invalidates all outstanding access tokens at once, so a deactivated
+      user is locked out immediately rather than up to ~15 minutes later.
+    - **Refresh rotation + theft detection:** refresh tokens of one login form a *session
+      family* (a chain). On refresh the presented token is revoked and a new one is issued.
+      To tolerate offline retries and flaky networks there is a short grace window (~30s):
+      re-presenting the *immediately previous* (just-rotated) token within that window still
+      succeeds and returns a fresh valid token instead of failing, so honest retries never log
+      people out. (The identical successor is not returned — only token hashes are stored.)
+      Re-presenting a rotated/revoked token OUTSIDE the grace window (or any older token in the
+      chain) is treated as theft: the ENTIRE session family is revoked and the call returns
+      `401 INVALID_TOKEN`.
+    - **Invite codes:** one-time and expiring. The server stores only an HMAC-SHA256 of the
+      code, keyed by a server secret from env (`INVITE_HMAC_SECRET`) — never the raw code or a
+      bare unkeyed hash. Codes have
+      >= 40 bits of entropy and use an unambiguous alphabet (no `0/O/1/l/I`) so they are hard
+      to brute-force and safe to read aloud. The plaintext code is shown exactly once, at
+      create or reissue time. A used/expired/unknown code returns an identical
+      `401 INVALID_CREDENTIALS` (no enumeration or brute-force signal).
+    - `POST /auth/login` and `POST /auth/join` return an identical `401 INVALID_CREDENTIALS`
+      body whether the principal/code does not exist or the secret is wrong.
+    - **Rate limiting:** `login`, `join` and `register` are rate-limited; exceeding the limit
+      returns `429 RATE_LIMITED` with `Retry-After`.
+    - **Client IP behind Caddy:** in production the app sits behind Caddy, which appends the
+      real client IP to `X-Forwarded-For`. The backend has a configurable list of trusted
+      proxy CIDRs (env var `TRUSTED_PROXIES`). The rate-limit key is the client IP taken as
+      the right-most `X-Forwarded-For` entry that is NOT in the trusted set; if the direct
+      socket peer is not a trusted proxy, `X-Forwarded-For` is ignored entirely and the socket
+      IP is used. This prevents a client from spoofing `X-Forwarded-For` to evade the limiter.
+      Tested by: (a) request with a trusted-proxy peer + spoofed `X-Forwarded-For` buckets by
+      the forwarded IP; (b) request with an untrusted peer + spoofed `X-Forwarded-For` buckets
+      by the socket IP (spoof ignored); (c) two different forwarded IPs get independent buckets.
+    - All secrets (JWT signing key, `INVITE_HMAC_SECRET`, trusted proxies, etc.) come from
+      environment variables only.
+    - Phone numbers are normalized to E.164 (e.g. `+998901234567`) before storage/lookup.
+
+    ## Known limitations (v1)
+    - No proof of ownership of a phone or email (no OTP / verification link). A Founder can
+      register with any email/phone; this is accepted risk for v1 and planned for a later phase.
+    - Exactly one FOUNDER per organization; there is no transfer of ownership to another user.
+    - No password reset in v1 (neither self-service nor admin-initiated).
+  version: "0.4.0"
   contact:
     name: Lebellion
+  license:
+    name: Proprietary
+    url: https://lebellion.uz/license
 
 servers:
-  - url: http://localhost:8080
+  - url: https://api.lebellion.uz
+    description: Production (Uzbekistan)
+  - url: http://127.0.0.1:8080
     description: Local development
+
+tags:
+  - name: System
+    description: Service health
+  - name: Auth
+    description: Registration, login, token lifecycle
+  - name: Invites
+    description: Invite codes (issued by Founder or Branch Manager)
+  - name: Organization
+    description: Branches and units (org-scoped)
+  - name: Employees
+    description: Employee management (org / branch scoped)
+  - name: Me
+    description: Current authenticated principal
 
 paths:
   /health:
     get:
       summary: Health check
+      description: Unversioned; exempt from X-App-Version gating. Used by infra monitoring.
       operationId: getHealth
       tags:
         - System
+      security: []
       responses:
         "200":
           description: Service is healthy
@@ -24,8 +110,674 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthResponse"
+        "503":
+          description: Service is not ready (e.g. database unreachable)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/v1/auth/register:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    post:
+      summary: Register a new organization and its Founder
+      description: |
+        Creates an organization and its first user with role FOUNDER in one call.
+        Exactly one of `email` or `phone` must be provided; both are allowed.
+        `phone` is normalized to E.164. Returns an access/refresh token pair.
+
+        Disabled by default: enabled only when `REGISTRATION_ENABLED=true`. When disabled,
+        returns `403 REGISTRATION_DISABLED`.
+      operationId: register
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRequest"
+      responses:
+        "201":
+          description: Organization and Founder created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          description: Self-serve registration is disabled on this server.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: REGISTRATION_DISABLED
+                message: Registration is disabled
+        "409":
+          description: An organization with this name, or a user with this email/phone, already exists.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/v1/auth/login:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    post:
+      summary: Login by email or phone + password (Founder / Branch Manager)
+      description: |
+        `login` accepts either an email or an E.164 phone number.
+        On unknown principal OR wrong password the response is an identical
+        `401 INVALID_CREDENTIALS` to prevent account enumeration.
+      operationId: login
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/v1/auth/join:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    post:
+      summary: Employee / Branch Manager joins via a one-time invite code
+      description: |
+        Consumes an invite code. The code determines the organization, branch, unit and role.
+        A code is single-use and expires; a used, expired or unknown code returns an
+        identical `401 INVALID_CREDENTIALS` (no code enumeration or brute-force signal).
+      operationId: join
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JoinRequest"
+      responses:
+        "201":
+          description: User created from invite and authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidCredentials"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/v1/auth/refresh:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    post:
+      summary: Rotate the refresh token and issue a new access token
+      description: |
+        Verifies the presented refresh token against its stored hash. On success the old token
+        is revoked and a new access/refresh pair is returned (rotation).
+
+        Grace window (~30s): re-presenting the immediately previous (just-rotated) token within
+        the window still succeeds and returns a fresh valid token (safe for offline retries),
+        NOT an error. The identical successor is not returned (only token hashes are stored).
+
+        Theft detection: presenting a rotated/revoked token OUTSIDE the grace window (or any
+        older token in the chain) revokes the WHOLE family and returns `401 INVALID_TOKEN`.
+        Expired or unknown tokens also return `401 INVALID_TOKEN`.
+      operationId: refresh
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "200":
+          description: New token pair issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/InvalidToken"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/auth/logout:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    post:
+      summary: Revoke a refresh token
+      description: Revokes the presented refresh token (and its session family). Idempotent; always 204.
+      operationId: logout
+      tags:
+        - Auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RefreshRequest"
+      responses:
+        "204":
+          description: Token revoked (or already invalid)
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/me:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    get:
+      summary: Get the current authenticated principal
+      operationId: getMe
+      tags:
+        - Me
+      responses:
+        "200":
+          description: Current user profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/invites:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    post:
+      summary: Create a one-time invite code
+      description: |
+        Roles: FOUNDER may invite BRANCH_MANAGER or EMPLOYEE anywhere in the org; BRANCH_MANAGER
+        may invite EMPLOYEE only, and only into units of their OWN branch.
+        - For `role=EMPLOYEE`: `unitId` is required (branch is derived from the unit).
+        - For `role=BRANCH_MANAGER`: `branchId` is required and `unitId` must be omitted.
+        The target branch/unit must belong to the caller's organization (and, for a
+        BRANCH_MANAGER caller, to their own branch). The plaintext `code` is returned once.
+      operationId: createInvite
+      tags:
+        - Invites
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateInviteRequest"
+      responses:
+        "201":
+          description: Invite created (plaintext code returned once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InviteResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Target branch/unit not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+    get:
+      summary: List pending invites (paginated)
+      description: |
+        Returns invite metadata WITHOUT the code (the code is only ever shown at create/reissue).
+        FOUNDER sees the whole org; BRANCH_MANAGER sees only their own branch.
+      operationId: listInvites
+      tags:
+        - Invites
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/InviteStatus"
+      responses:
+        "200":
+          description: A page of invites
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InvitePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/invites/{inviteId}/reissue:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: inviteId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Reissue an invite (revoke old code, mint a new one)
+      description: |
+        Revokes the existing (unused) code for this invite and generates a fresh code with a
+        new TTL, keeping the same branch/unit/role binding. Returns the new plaintext code once.
+        Only allowed while the invite is still PENDING. Same role scoping as create.
+      operationId: reissueInvite
+      tags:
+        - Invites
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReissueInviteRequest"
+      responses:
+        "200":
+          description: New code issued (returned once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InviteResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Invite not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Invite is not in a reissuable (PENDING) state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/branches:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    get:
+      summary: List branches (paginated)
+      description: FOUNDER sees all org branches; BRANCH_MANAGER sees only their own branch.
+      operationId: listBranches
+      tags:
+        - Organization
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of branches
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BranchPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+    post:
+      summary: Create a branch (FOUNDER only)
+      operationId: createBranch
+      tags:
+        - Organization
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBranchRequest"
+      responses:
+        "201":
+          description: Branch created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Branch"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/branches/{branchId}/units:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: branchId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Create a unit under a branch (FOUNDER or BRANCH_MANAGER)
+      description: |
+        FOUNDER may create a unit under any branch in the org.
+        BRANCH_MANAGER may create a unit only under their OWN branch.
+      operationId: createUnit
+      tags:
+        - Organization
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUnitRequest"
+      responses:
+        "201":
+          description: Unit created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Unit"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Branch not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/units:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    get:
+      summary: List units (paginated)
+      description: FOUNDER sees all org units; BRANCH_MANAGER sees only their own branch's units.
+      operationId: listUnits
+      tags:
+        - Organization
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: branchId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: A page of units
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnitPage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/employees:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    get:
+      summary: List employees (paginated)
+      description: |
+        FOUNDER sees all employees in the org; BRANCH_MANAGER sees only employees of their own
+        branch. Optional `branchId`/`unitId` filters are further constrained by the caller's scope.
+      operationId: listEmployees
+      tags:
+        - Employees
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+        - name: branchId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: unitId
+          in: query
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - name: active
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: A page of employees
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmployeePage"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/employees/{employeeId}/deactivate:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: employeeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Deactivate an employee and revoke all their tokens
+      description: |
+        Marks the user inactive, bumps their `tokenVersion` (so outstanding ACCESS tokens are
+        rejected on the very next request, not up to ~15 min later) and revokes ALL of their
+        refresh-token families (immediate sign-out everywhere).
+        FOUNDER may deactivate any BRANCH_MANAGER/EMPLOYEE in the org;
+        BRANCH_MANAGER may deactivate EMPLOYEEs of their OWN branch only. A user cannot
+        deactivate themselves, and a FOUNDER cannot be deactivated via this endpoint.
+      operationId: deactivateEmployee
+      tags:
+        - Employees
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Employee deactivated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Employee not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Target cannot be deactivated (self, or a FOUNDER)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Short-lived JWT access token issued by the /auth endpoints.
+
+  parameters:
+    XAppVersion:
+      name: X-App-Version
+      in: header
+      required: true
+      description: |
+        Client app version (semver, e.g. `1.4.0`). Required on all `/api/v1` requests.
+        Too-old clients get `426 UPGRADE_REQUIRED`.
+      schema:
+        type: string
+        example: "1.4.0"
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Max items per page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from a previous page's `nextCursor`. Omit for the first page.
+      schema:
+        type: string
+
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: Missing, expired, forged or otherwise invalid access token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    InvalidCredentials:
+      description: |
+        Authentication failed. Identical for unknown principal and wrong secret to prevent enumeration.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: INVALID_CREDENTIALS
+            message: Invalid credentials
+    InvalidToken:
+      description: Refresh token is unknown, expired, revoked or already rotated (family revoked)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: INVALID_TOKEN
+            message: Invalid token
+    Forbidden:
+      description: Authenticated but not allowed to perform this action (role or branch scope)
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UpgradeRequired:
+      description: Client app version is no longer supported; upgrade required.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: UPGRADE_REQUIRED
+            message: Please update the app to continue
+    RateLimited:
+      description: Too many attempts; retry later
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: RATE_LIMITED
+            message: Too many requests
+
   schemas:
     HealthResponse:
       type: object
@@ -35,3 +787,390 @@ components:
         status:
           type: string
           example: ok
+
+    Role:
+      type: string
+      enum:
+        - FOUNDER
+        - BRANCH_MANAGER
+        - EMPLOYEE
+
+    InvitableRole:
+      type: string
+      description: Roles that can be granted through an invite (FOUNDER is never invitable).
+      enum:
+        - BRANCH_MANAGER
+        - EMPLOYEE
+
+    InviteStatus:
+      type: string
+      enum:
+        - PENDING
+        - USED
+        - EXPIRED
+        - REVOKED
+
+    RegisterRequest:
+      type: object
+      required:
+        - organizationName
+        - fullName
+        - password
+      properties:
+        organizationName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        fullName:
+          type: string
+          minLength: 1
+          maxLength: 255
+        email:
+          type: [string, "null"]
+          format: email
+          description: Required if `phone` is absent.
+        phone:
+          type: [string, "null"]
+          description: Normalized to E.164. Required if `email` is absent.
+          example: "+998901234567"
+        password:
+          type: string
+          format: password
+          minLength: 10
+          maxLength: 128
+          writeOnly: true
+
+    LoginRequest:
+      type: object
+      required:
+        - login
+        - password
+      properties:
+        login:
+          type: string
+          description: Email or E.164 phone number.
+        password:
+          type: string
+          format: password
+          writeOnly: true
+
+    JoinRequest:
+      type: object
+      required:
+        - inviteCode
+        - fullName
+      properties:
+        inviteCode:
+          type: string
+          writeOnly: true
+        fullName:
+          type: string
+          minLength: 1
+          maxLength: 255
+
+    RefreshRequest:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          writeOnly: true
+
+    AuthResponse:
+      type: object
+      required:
+        - accessToken
+        - refreshToken
+        - tokenType
+        - expiresIn
+        - user
+      properties:
+        accessToken:
+          type: string
+          description: Short-lived JWT (~15 minutes).
+        refreshToken:
+          type: string
+          description: Opaque high-entropy token. Rotated on every refresh.
+        tokenType:
+          type: string
+          enum:
+            - Bearer
+          example: Bearer
+        expiresIn:
+          type: integer
+          description: Access token lifetime in seconds.
+          example: 900
+        user:
+          $ref: "#/components/schemas/UserProfile"
+
+    UserProfile:
+      type: object
+      required:
+        - id
+        - organizationId
+        - fullName
+        - role
+        - active
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        active:
+          type: boolean
+        email:
+          type: [string, "null"]
+          format: email
+        phone:
+          type: [string, "null"]
+        branchId:
+          type: [string, "null"]
+          format: uuid
+          description: Null for FOUNDER; set for BRANCH_MANAGER and EMPLOYEE.
+        unitId:
+          type: [string, "null"]
+          format: uuid
+          description: Set for EMPLOYEE; null for FOUNDER and BRANCH_MANAGER.
+
+    CreateInviteRequest:
+      type: object
+      required:
+        - role
+      properties:
+        role:
+          allOf:
+            - $ref: "#/components/schemas/InvitableRole"
+          default: EMPLOYEE
+        branchId:
+          type: [string, "null"]
+          format: uuid
+          description: Required when role=BRANCH_MANAGER. Ignored/omitted for EMPLOYEE.
+        unitId:
+          type: [string, "null"]
+          format: uuid
+          description: Required when role=EMPLOYEE. Must be omitted for BRANCH_MANAGER.
+        expiresInMinutes:
+          type: integer
+          minimum: 1
+          maximum: 43200
+          default: 1440
+          description: Time-to-live for the code. Defaults to 24 hours.
+
+    ReissueInviteRequest:
+      type: object
+      properties:
+        expiresInMinutes:
+          type: integer
+          minimum: 1
+          maximum: 43200
+          default: 1440
+          description: TTL for the new code. Defaults to 24 hours.
+
+    InviteResponse:
+      type: object
+      description: Returned only at create/reissue; carries the one-time plaintext code.
+      required:
+        - id
+        - code
+        - role
+        - branchId
+        - expiresAt
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          description: Plaintext invite code. Shown ONCE; only its hash is stored.
+        role:
+          $ref: "#/components/schemas/InvitableRole"
+        branchId:
+          type: string
+          format: uuid
+        unitId:
+          type: [string, "null"]
+          format: uuid
+          description: Set for EMPLOYEE invites; null for BRANCH_MANAGER invites.
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    InviteSummary:
+      type: object
+      description: Invite metadata WITHOUT the code (used in list responses).
+      required:
+        - id
+        - role
+        - branchId
+        - status
+        - expiresAt
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          $ref: "#/components/schemas/InvitableRole"
+        branchId:
+          type: string
+          format: uuid
+        unitId:
+          type: [string, "null"]
+          format: uuid
+        status:
+          $ref: "#/components/schemas/InviteStatus"
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateBranchRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        address:
+          type: [string, "null"]
+
+    Branch:
+      type: object
+      required:
+        - id
+        - organizationId
+        - name
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        address:
+          type: [string, "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    CreateUnitRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+
+    Unit:
+      type: object
+      required:
+        - id
+        - organizationId
+        - branchId
+        - name
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        branchId:
+          type: string
+          format: uuid
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    BranchPage:
+      type: object
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Branch"
+        nextCursor:
+          type: [string, "null"]
+          description: Cursor for the next page; null when there are no more items.
+
+    UnitPage:
+      type: object
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Unit"
+        nextCursor:
+          type: [string, "null"]
+
+    EmployeePage:
+      type: object
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/UserProfile"
+        nextCursor:
+          type: [string, "null"]
+
+    InvitePage:
+      type: object
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InviteSummary"
+        nextCursor:
+          type: [string, "null"]
+
+    Error:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable error code.
+          example: INVALID_CREDENTIALS
+        message:
+          type: string
+          description: Human-readable, non-sensitive description.
+
+security:
+  - bearerAuth: []
