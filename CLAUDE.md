@@ -89,9 +89,21 @@ Organization -> Branch -> Unit (подразделение: Kitchen, Hall, Admin
 6. Keep things simple. No microservices, no message brokers, no caching layers until measured need.
 7. After each task run the build and tests and report the actual results; never claim something passed without running it.
 8. If a requirement here is ambiguous, ask ONE precise question instead of guessing.
+9. If one error is not resolved within 5 minutes, stop and show what you tried.
 
 ## UX principles (for the mobile phase)
 - Minimal and fast: one primary action per screen, large tap targets, system fonts, two colors max plus status colors.
 - Employee flow: open app -> today's tasks -> tap task -> Yes/No -> camera -> send. Works offline, uploads later.
 - Founder flow: dashboard by branch (done / missed / extended, overdue in red) -> review queue with swipe
   accept/reject and quick reject reasons -> extension requests. Show the previous photo of the same task next to the new one.
+- App lock: biometrics with device-passcode fallback, required on first launch after login (no server involvement).
+- Employees use personal phones: photos are taken in-app and MUST NOT be saved to the device gallery.
+- Session is bound to a device_id; a new phone requires a recovery invite (target_employee_id).
+
+## Known pitfalls
+- Spring Boot 4: MockMvc/WebMvc test support moved to `spring-boot-starter-webmvc-test`; use `@MockitoBean`
+  (not `@MockBean`) and `RestTestClient` (not `TestRestTemplate`).
+- Testcontainers 2.x: `PostgreSQLContainer` is no longer generic (no `<*>`) and lives in package
+  `org.testcontainers.postgresql`.
+- The user's global `.gitignore` blocks `.env.*`; in the project `.gitignore` keep this order:
+  `.env`, `.env.*`, `!.env.example`.
