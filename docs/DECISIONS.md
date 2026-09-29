@@ -94,6 +94,24 @@
   (`action:clientIp` + `action:account`); `change-password` отзывает все сессии и выдаёт новую пару
   на текущее устройство. V3: partial unique на `lower(organization.name)`.
 
+## Phase 1 — auth endpoints, под-шаг (b): join (accepted)
+
+- **`POST /api/v1/auth/join`** — consume инвайта в одной транзакции: EMPLOYEE / BRANCH_MANAGER (+пароль) /
+  recovery (без пароля, отзыв всех сессий пользователя). Пометка USED атомарна с созданием пользователя и
+  первым refresh-токеном; любой провал (в т.ч. валидация пароля менеджера) → код остаётся PENDING.
+  Гонку закрывает пессимистичная блокировка строки инвайта (`findByCodeHmacForUpdate`).
+- **Повторный join уже использованным кодом — детерминированно:** `409 INVITE_ALREADY_USED` тому же
+  устройству (по наличию `refresh_token(userId, deviceId)`), `401 INVALID_CREDENTIALS` — всем остальным
+  (enumeration-safe, как unknown/expired/revoked).
+- **Контакт BRANCH_MANAGER задаёт FOUNDER в инвайте** (вариант B): колонки `invite.email/phone` (V4),
+  join копирует их в нового менеджера; `JoinRequest.password` обязателен только для менеджерского инвайта.
+- **`audit_log` (V4)** — append-only, generic (`event_type / target_type / target_id / metadata jsonb`).
+  Пишется **нативным JDBC** (`CAST(? AS jsonb/uuid)`) в обход JSON-маппинга Hibernate (Boot 4 = Jackson 3);
+  перед аудитом — `flush()`, чтобы raw-JDBC видел ещё не сброшенные JPA-вставки (FK `actor_user_id`).
+  События: `EMPLOYEE_JOINED` / `MANAGER_JOINED` / `RECOVERY_JOIN`; `PASSWORD_RESET_BY_FOUNDER` из (г)
+  ляжет в ту же таблицу без миграции.
+- **`register` теперь под rate-limit** (`register-ip`), проверка идёт после gate `registrationEnabled`.
+
 ## Дельты контракта (openapi) — к реализации в блоках (в)/(г)
 
 - Единый префикс: все auth-эндпоинты под `/api/v1/auth/...` (в контракте уже так; `/me` — `/api/v1/me`).

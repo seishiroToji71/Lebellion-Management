@@ -24,6 +24,7 @@ class AuthServiceRegistrationDisabledTest {
             encoder = mock(PasswordEncoder::class.java),
             tokenIssuer = mock(TokenIssuer::class.java),
             rateLimiter = mock(RateLimiter::class.java),
+            responses = AuthResponseFactory(),
             props = AuthProperties(registrationEnabled = false),
             clock = Clock.systemUTC(),
         )
@@ -32,6 +33,7 @@ class AuthServiceRegistrationDisabledTest {
             service.register(
                 RegisterRequest("Acme", "Founder", "f@example.com", null, "sup3rsecret!"),
                 "device-1",
+                "127.0.0.1",
             )
         }
     }

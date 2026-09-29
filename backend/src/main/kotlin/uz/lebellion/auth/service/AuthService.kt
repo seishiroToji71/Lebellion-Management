@@ -32,6 +32,7 @@ class AuthService(
     private val encoder: PasswordEncoder,
     private val tokenIssuer: TokenIssuer,
     private val rateLimiter: RateLimiter,
+    private val responses: AuthResponseFactory,
     private val props: AuthProperties,
     private val clock: Clock,
 ) {
@@ -39,8 +40,9 @@ class AuthService(
     private val dummyHash: String by lazy { encoder.encode("timing-equalizer")!! }
 
     @Transactional
-    fun register(req: RegisterRequest, deviceId: String): AuthResponse {
+    fun register(req: RegisterRequest, deviceId: String, clientIp: String): AuthResponse {
         if (!props.registrationEnabled) throw RegistrationDisabledException()
+        rateLimit(limiterCheck("register-ip:$clientIp", "register-ip"))
         val email = req.email?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
         val phone = req.phone?.let(::normalizePhone)?.takeIf { it.isNotEmpty() }
         if (email == null && phone == null) throw RequestValidationException("email or phone is required")
@@ -60,7 +62,7 @@ class AuthService(
                 passwordHash = encoder.encode(req.password),
             ),
         )
-        return authResponse(tokenIssuer.issueNewSession(user, deviceId), user)
+        return responses.authResponse(tokenIssuer.issueNewSession(user, deviceId), user)
     }
 
     fun login(req: LoginRequest, deviceId: String, clientIp: String): AuthResponse {
@@ -76,7 +78,7 @@ class AuthService(
             false
         }
         if (user == null || !passwordOk || !user.isActive) throw InvalidCredentialsException()
-        return authResponse(tokenIssuer.issueNewSession(user, deviceId), user)
+        return responses.authResponse(tokenIssuer.issueNewSession(user, deviceId), user)
     }
 
     @Transactional
@@ -95,12 +97,12 @@ class AuthService(
         users.save(user)
         refreshTokens.revokeAllActiveForUser(user.id!!, clock.instant(), "PASSWORD_CHANGE")
         // fresh session for the current device so the user stays logged in here
-        return authResponse(tokenIssuer.issueNewSession(user, deviceId), user)
+        return responses.authResponse(tokenIssuer.issueNewSession(user, deviceId), user)
     }
 
     @Transactional(readOnly = true)
     fun profile(userId: UUID): UserProfile =
-        users.findById(userId).map(::toProfile).orElseThrow { InvalidCredentialsException() }
+        users.findById(userId).map(responses::profile).orElseThrow { InvalidCredentialsException() }
 
     private fun rateLimit(vararg checks: RateLimiter.Check) {
         if (!rateLimiter.tryAcquireAll(checks.toList())) throw RateLimitedException(60)
@@ -124,24 +126,4 @@ class AuthService(
     // Minimal phone normalization for keying/lookup; full E.164 validation is a later concern.
     private fun normalizePhone(raw: String): String = raw.trim().replace(Regex("[\\s()\\-]"), "")
 
-    private fun authResponse(issued: TokenIssuer.Issued, user: AppUser) = AuthResponse(
-        accessToken = issued.accessToken,
-        refreshToken = issued.refreshToken,
-        tokenType = "Bearer",
-        expiresIn = issued.expiresInSeconds,
-        user = toProfile(user),
-    )
-
-    private fun toProfile(u: AppUser) = UserProfile(
-        id = u.id!!,
-        organizationId = u.organizationId,
-        fullName = u.name,
-        role = u.role,
-        active = u.isActive,
-        email = u.email,
-        phone = u.phone,
-        branchId = u.branchId,
-        unitId = u.unitId,
-        mustChangePassword = u.mustChangePassword,
-    )
 }

@@ -19,7 +19,15 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.util.UUID
 
-@SpringBootTest(webEnvironment = RANDOM_PORT, properties = ["lebellion.auth.registration-enabled=true"])
+@SpringBootTest(
+    webEnvironment = RANDOM_PORT,
+    properties = [
+        "lebellion.auth.registration-enabled=true",
+        // Many registrations share one localhost IP; raise the per-IP limit so it doesn't starve
+        // unrelated cases (the limiter is covered by RegisterRateLimitIT / RateLimiterTest).
+        "lebellion.auth.rate-limit.register-ip.limit=100000",
+    ],
+)
 @Testcontainers
 class AuthEndpointsIT {
 

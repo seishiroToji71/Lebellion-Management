@@ -25,6 +25,10 @@ class GlobalExceptionHandler {
     fun conflict(e: ConflictException) =
         error(HttpStatus.CONFLICT, "CONFLICT", e.message ?: "Conflict")
 
+    @ExceptionHandler(InviteAlreadyUsedException::class)
+    fun inviteAlreadyUsed(e: InviteAlreadyUsedException) =
+        error(HttpStatus.CONFLICT, "INVITE_ALREADY_USED", "This invite code has already been used")
+
     @ExceptionHandler(DataIntegrityViolationException::class)
     fun dataIntegrity(e: DataIntegrityViolationException) =
         error(HttpStatus.CONFLICT, "CONFLICT", "Already exists")

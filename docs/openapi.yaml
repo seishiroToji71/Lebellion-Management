@@ -215,6 +215,9 @@ paths:
         Consumes an invite code. The code determines the organization, branch, unit and role.
         A code is single-use and expires; a used, expired or unknown code returns an
         identical `401 INVALID_CREDENTIALS` (no code enumeration or brute-force signal).
+
+        Exception: re-submitting an already-USED code from the SAME device that consumed it returns a
+        deterministic `409 INVITE_ALREADY_USED` (safe — only that device could match), not 401.
       operationId: join
       tags:
         - Auth
@@ -236,6 +239,15 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/InvalidCredentials"
+        "409":
+          description: The invite was already used by this same device.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: INVITE_ALREADY_USED
+                message: This invite code has already been used
         "426":
           $ref: "#/components/responses/UpgradeRequired"
         "429":
@@ -920,6 +932,15 @@ components:
           type: string
           minLength: 1
           maxLength: 255
+        password:
+          type: [string, "null"]
+          format: password
+          minLength: 10
+          maxLength: 128
+          writeOnly: true
+          description: |
+            Required for a BRANCH_MANAGER invite (the manager's login email/phone is carried by the
+            invite). Must be omitted for EMPLOYEE invites and for recovery invites.
 
     RefreshRequest:
       type: object

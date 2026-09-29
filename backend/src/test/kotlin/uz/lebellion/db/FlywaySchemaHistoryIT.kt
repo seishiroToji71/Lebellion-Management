@@ -25,7 +25,7 @@ class FlywaySchemaHistoryIT {
     lateinit var dataSource: DataSource
 
     @Test
-    fun `V1 V2 V3 are recorded as success`() {
+    fun `all migrations are recorded as success in contiguous order`() {
         val rows = mutableListOf<Triple<String?, String?, Boolean>>()
         dataSource.connection.use { c ->
             c.createStatement().use { st ->
@@ -43,7 +43,8 @@ class FlywaySchemaHistoryIT {
         rows.forEach { (v, d, s) -> println("version=$v | description=$d | success=$s") }
         println("---- end ----")
 
-        assertEquals(listOf("1", "2", "3"), rows.map { it.first })
+        assertTrue(rows.isNotEmpty(), "expected at least one migration")
+        assertEquals((1..rows.size).map { it.toString() }, rows.map { it.first }, "versions must be contiguous 1..N")
         assertTrue(rows.all { it.third }, "all migrations must be success=true")
     }
 }

@@ -12,11 +12,13 @@ import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import uz.lebellion.auth.security.AuthPrincipal
 import uz.lebellion.auth.service.AuthService
+import uz.lebellion.auth.service.JoinService
 
 @RestController
 @RequestMapping("/api/v1/auth")
 class AuthController(
     private val authService: AuthService,
+    private val joinService: JoinService,
     private val clientIpResolver: ClientIpResolver,
 ) {
     @PostMapping("/register")
@@ -24,7 +26,16 @@ class AuthController(
     fun register(
         @Valid @RequestBody req: RegisterRequest,
         @RequestHeader("X-Device-Id") deviceId: String,
-    ): AuthResponse = authService.register(req, deviceId)
+        http: HttpServletRequest,
+    ): AuthResponse = authService.register(req, deviceId, clientIp(http))
+
+    @PostMapping("/join")
+    @ResponseStatus(HttpStatus.CREATED)
+    fun join(
+        @Valid @RequestBody req: JoinRequest,
+        @RequestHeader("X-Device-Id") deviceId: String,
+        http: HttpServletRequest,
+    ): AuthResponse = joinService.join(req, deviceId, clientIp(http))
 
     @PostMapping("/login")
     fun login(

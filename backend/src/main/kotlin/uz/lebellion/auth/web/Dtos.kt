@@ -27,6 +27,13 @@ data class ChangePasswordRequest(
     @field:NotBlank @field:Size(min = 10, max = 128) val newPassword: String,
 )
 
+data class JoinRequest(
+    @field:NotBlank val inviteCode: String,
+    @field:NotBlank @field:Size(max = 255) val fullName: String,
+    // Required for a BRANCH_MANAGER invite; must be absent for EMPLOYEE and recovery invites.
+    @field:Size(min = 10, max = 128) val password: String? = null,
+)
+
 data class UserProfile(
     val id: UUID,
     val organizationId: UUID,
