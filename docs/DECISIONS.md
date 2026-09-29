@@ -66,10 +66,26 @@
   - Для FOUNDER recovery-инвайта НЕТ. Потеря доступа и к email, и к телефону → только admin CLI
     (см. `docs/RUNBOOK.md`).
 
+## Phase 1 — auth core (accepted, blok (б))
+
+- **Хеширование паролей:** bcrypt через `DelegatingPasswordEncoder` (без доп. зависимостей; argon2 можно
+  добавить позже — encoder переживёт миграцию хешей).
+- **JWT:** HS256 через `spring-boot-starter-oauth2-resource-server` (Nimbus, Spring-native). Симметричный
+  секрет из env. Claims access-токена: `sub`, `org_id`, `role`, `token_version`, `device_id`, `iat`, `exp`.
+- **Зависимости:** добавлены `spring-boot-starter-security`, `spring-boot-starter-oauth2-resource-server`,
+  `org.jetbrains.kotlin:kotlin-reflect` (обязателен для constructor-binding `@ConfigurationProperties`).
+- **SecurityFilterChain:** stateless, CSRF off, deny-by-default. `permitAll` — только явный список
+  token-free auth-эндпоинтов (`register/login/join/refresh/logout` + `password-reset/request|confirm`)
+  и `/health`. Всё остальное (включая `/api/v1/me`) требует JWT.
+- **Прочие примитивы:** SHA-256 хеш refresh-токенов, HMAC-SHA256 кодов, CSPRNG-генератор
+  (инвайты — алфавит без `0/O/1/I/L`, ≥40 бит), in-memory fixed-window rate limiter, резолвер клиентского
+  IP за доверенным прокси, gate версии приложения (426), `NotificationSender` + dev-заглушка (маскирует адрес).
+
 ## Дельты контракта (openapi) — к реализации в блоках (в)/(г)
 
-- `X-Device-Id` header (required) на `/auth/register|login|join|refresh|logout`.
+- Единый префикс: все auth-эндпоинты под `/api/v1/auth/...` (в контракте уже так; `/me` — `/api/v1/me`).
+- `X-Device-Id` header (required) на `/api/v1/auth/register|login|join|refresh|logout`.
 - `JoinRequest.password` — обязателен для инвайта роли BRANCH_MANAGER, запрещён для EMPLOYEE.
 - `POST /api/v1/employees/{employeeId}/recovery-invite`.
-- `POST /auth/password-reset/request` + `POST /auth/password-reset/confirm`.
+- `POST /api/v1/auth/password-reset/request` + `POST /api/v1/auth/password-reset/confirm`.
 - `InviteStatus.EXPIRED` — вычисляемый (в БД только PENDING/USED/REVOKED).

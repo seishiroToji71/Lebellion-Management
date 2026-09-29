@@ -13,3 +13,30 @@ spring:
 
 server:
   port: ${PORT:8080}
+  # Caddy is the single reverse proxy; let Spring honour forwarded headers.
+  forward-headers-strategy: framework
+
+lebellion:
+  auth:
+    jwt:
+      # DEV default only (>=32 bytes for HS256). Override via env in prod; never commit a real secret.
+      secret: ${JWT_SECRET:dev-insecure-jwt-secret-change-me-0123456789abcdef}
+      access-ttl: PT15M
+    refresh:
+      employee-sliding: P60D
+      manager-sliding: P30D
+      manager-absolute: P90D
+    invite:
+      hmac-secret: ${INVITE_HMAC_SECRET:dev-insecure-invite-hmac-secret-change-me}
+      ttl: P7D
+    password-reset:
+      hmac-secret: ${PASSWORD_RESET_HMAC_SECRET:dev-insecure-reset-hmac-secret-change-me}
+      code-ttl: PT15M
+      max-attempts: 5
+    min-app-version: "1.0.0"
+    trusted-proxy-count: 1
+    rate-limit:
+      login: { limit: 5, window: PT1M }
+      join: { limit: 5, window: PT1M }
+      register: { limit: 3, window: PT1H }
+      password-reset-request: { limit: 3, window: PT15M }
