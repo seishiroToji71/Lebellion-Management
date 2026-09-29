@@ -15,6 +15,9 @@ import org.springframework.security.oauth2.jwt.JwtEncoder
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder
 import org.springframework.security.web.SecurityFilterChain
+import uz.lebellion.auth.security.DbBackedJwtAuthenticationConverter
+import uz.lebellion.auth.security.RestAccessDeniedHandler
+import uz.lebellion.auth.security.RestAuthenticationEntryPoint
 import java.nio.charset.StandardCharsets
 import javax.crypto.spec.SecretKeySpec
 
@@ -42,15 +45,20 @@ class SecurityConfig(private val props: AuthProperties) {
         NimbusJwtDecoder.withSecretKey(jwtSecretKey).macAlgorithm(MacAlgorithm.HS256).build()
 
     @Bean
-    fun securityFilterChain(http: HttpSecurity): SecurityFilterChain {
+    fun securityFilterChain(
+        http: HttpSecurity,
+        jwtAuthenticationConverter: DbBackedJwtAuthenticationConverter,
+        authenticationEntryPoint: RestAuthenticationEntryPoint,
+        accessDeniedHandler: RestAccessDeniedHandler,
+    ): SecurityFilterChain {
         http
             .csrf { it.disable() }
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests {
                 it.requestMatchers("/health").permitAll()
                 // Token-free auth endpoints that establish or restore a session. Explicit allow-list
-                // (deny-by-default): anything not listed — incl. /api/v1/me and future /auth/* that
-                // need a token — stays authenticated.
+                // (deny-by-default): anything not listed — incl. /api/v1/me, /auth/change-password and
+                // future /auth/* that need a token — stays authenticated.
                 it.requestMatchers(
                     "/api/v1/auth/register",
                     "/api/v1/auth/login",
@@ -62,7 +70,15 @@ class SecurityConfig(private val props: AuthProperties) {
                 ).permitAll()
                 it.anyRequest().authenticated()
             }
-            .oauth2ResourceServer { rs -> rs.jwt { } }
+            .oauth2ResourceServer { rs ->
+                rs.jwt { it.jwtAuthenticationConverter(jwtAuthenticationConverter) }
+                rs.authenticationEntryPoint(authenticationEntryPoint)
+                rs.accessDeniedHandler(accessDeniedHandler)
+            }
+            .exceptionHandling {
+                it.authenticationEntryPoint(authenticationEntryPoint)
+                it.accessDeniedHandler(accessDeniedHandler)
+            }
         return http.build()
     }
 }

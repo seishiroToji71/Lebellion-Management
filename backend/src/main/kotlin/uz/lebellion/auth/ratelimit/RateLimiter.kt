@@ -37,4 +37,21 @@ class RateLimiter(private val clock: Clock) {
         }
         return allowed
     }
+
+    data class Check(val key: String, val rule: Rule)
+
+    /**
+     * Enforces several buckets at once, e.g. `action:ip` AND `action:user`. Every bucket is charged
+     * for the attempt (a login attempt counts against both the IP and the account); the request is
+     * allowed only if none of the buckets is exhausted. No short-circuit on purpose — an attempt must
+     * count against the account key even when the IP key still has room, and vice versa. This is what
+     * stops password guessing against a known account from rotating IPs.
+     */
+    fun tryAcquireAll(checks: List<Check>): Boolean {
+        var allowed = true
+        for (c in checks) {
+            if (!tryAcquire(c.key, c.rule)) allowed = false
+        }
+        return allowed
+    }
 }

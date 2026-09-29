@@ -33,10 +33,17 @@ lebellion:
       hmac-secret: ${PASSWORD_RESET_HMAC_SECRET:dev-insecure-reset-hmac-secret-change-me}
       code-ttl: PT15M
       max-attempts: 5
+    registration-enabled: ${REGISTRATION_ENABLED:false}
     min-app-version: "1.0.0"
     trusted-proxy-count: 1
+    # Rate-limit rules per dimension. login/change-password/password-reset are limited by BOTH the
+    # client IP and the account (login string or JWT sub) to block guessing from rotating IPs.
     rate-limit:
-      login: { limit: 5, window: PT1M }
-      join: { limit: 5, window: PT1M }
-      register: { limit: 3, window: PT1H }
-      password-reset-request: { limit: 3, window: PT15M }
+      login-ip:                    { limit: 10, window: PT1M }
+      login-user:                  { limit: 5,  window: PT15M }
+      change-password-ip:          { limit: 10, window: PT1M }
+      change-password-user:        { limit: 5,  window: PT15M }
+      register-ip:                 { limit: 3,  window: PT1H }
+      join-ip:                     { limit: 5,  window: PT1M }
+      password-reset-request-ip:   { limit: 3,  window: PT15M }
+      password-reset-request-user: { limit: 3,  window: PT15M }

@@ -19,13 +19,18 @@ data class AuthProperties(
     val refresh: Refresh = Refresh(Duration.ofDays(60), Duration.ofDays(30), Duration.ofDays(90)),
     val invite: Invite = Invite("", Duration.ofDays(7)),
     val passwordReset: PasswordReset = PasswordReset("", Duration.ofMinutes(15), 5),
+    /** Self-serve organization registration; disabled by default (see contract). */
+    val registrationEnabled: Boolean = false,
     /** Lowest client version the server still accepts; older clients get 426. */
     val minAppVersion: String = "1.0.0",
     /** How many reverse proxies (Caddy) sit in front of the app; used to resolve the real client IP. */
     val trustedProxyCount: Int = 1,
-    /** Rate-limit rules keyed by action name (login, join, register, password-reset-request). */
+    /** Rate-limit rules keyed by dimension (e.g. `login-ip`, `login-user`). */
     val rateLimit: Map<String, RateLimitRule> = emptyMap(),
 ) {
+    /** Rule for a dimension key, with a conservative fallback if unconfigured. */
+    fun rule(key: String): RateLimitRule = rateLimit[key] ?: RateLimitRule(5, Duration.ofMinutes(1))
+
     data class Jwt @ConstructorBinding constructor(
         val secret: String,
         val accessTtl: Duration,

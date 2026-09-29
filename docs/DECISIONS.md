@@ -81,6 +81,19 @@
   (инвайты — алфавит без `0/O/1/I/L`, ≥40 бит), in-memory fixed-window rate limiter, резолвер клиентского
   IP за доверенным прокси, gate версии приложения (426), `NotificationSender` + dev-заглушка (маскирует адрес).
 
+## Phase 1 — auth endpoints, под-шаг (a) (accepted)
+
+- **`is_active` проверяется на каждый запрос без кеша — намеренно, для мгновенного отзыва доступа.**
+  `DbBackedJwtAuthenticationConverter` читает `app_user` по PK в каждом JWT-запросе и сверяет `is_active`
+  и `token_version`; деактивация или bump версии рубит доступ на следующем же запросе.
+- **Boot 4 требует отдельный модуль `spring-boot-flyway`** (сам `flyway-core` миграции не запускает —
+  без модуля Flyway молча не стартует). Проект на **Jackson 3** (`tools.jackson`) вместо Jackson 2.
+- **`FlywaySchemaHistoryIT`** остаётся в наборе как регрессионный страж применения миграций
+  (ассертит V1/V2/V3 = success).
+- Реализованы эндпоинты `register` / `login` / `/me` / `change-password`; двойной рейт-лимит
+  (`action:clientIp` + `action:account`); `change-password` отзывает все сессии и выдаёт новую пару
+  на текущее устройство. V3: partial unique на `lower(organization.name)`.
+
 ## Дельты контракта (openapi) — к реализации в блоках (в)/(г)
 
 - Единый префикс: все auth-эндпоинты под `/api/v1/auth/...` (в контракте уже так; `/me` — `/api/v1/me`).
