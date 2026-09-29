@@ -34,14 +34,42 @@
   invite reuse + brute-force, refresh reuse + family revoke, parallel refresh, `device_id` mismatch,
   rate-limit IP behind a trusted proxy.
 
-## Ожидает моего OK
+## Phase 1 — V2 schema (accepted, applied via `V2__auth_and_roles.sql`)
 
-- **План миграции V2** — полный DDL для `app_user` / `invite` / `refresh_token`
-  (CHECK-ограничения, partial unique индексы, атомарная ротация).
-- **Дельты контракта (openapi):**
-  - `X-Device-Id` header (required) на `/auth/register|login|join|refresh|logout`.
-  - `JoinRequest.password` — обязателен для инвайта роли BRANCH_MANAGER, запрещён для EMPLOYEE.
-  - `POST /api/v1/employees/{employeeId}/recovery-invite`.
-  - `InviteStatus.EXPIRED` — вычисляемый (в БД только PENDING/USED/REVOKED).
-- **Открытый нюанс:** recovery-инвайт для BRANCH_MANAGER = админский сброс пароля
-  (менеджер задаёт новый пароль при join)? По умолчанию — да.
+Таблицы: `app_user` (было `employee`), `invite`, `refresh_token`, `password_reset`.
+Принятые допущения (зафиксированы в CHECK/partial-unique):
+- `email` и `phone` — глобально уникальны (partial unique, `email` по `lower()`), НЕ скоупятся
+  по org: логин по phone/email должен резолвиться в одного пользователя.
+- Один активный `FOUNDER` на организацию; один активный `BRANCH_MANAGER` на филиал
+  (partial unique `WHERE role = ... AND is_active` — деактивация освобождает слот).
+- `EMPLOYEE.branch_id = NULL` — филиал берётся через `unit` (единый источник истины).
+- `refresh_token`: один «живой» токен на семью (partial unique
+  `WHERE rotated_at IS NULL AND revoked_at IS NULL`); 30-сек grace не конфликтует
+  (ротированный токен имеет `rotated_at`).
+- `revoked_reason` без CHECK-списка значений (управляется приложением, чтобы не плодить миграции).
+
+## Phase 1 — password reset & recovery (accepted)
+
+- **Self-service сброс (FOUNDER / BRANCH_MANAGER):**
+  - `POST /auth/password-reset/request` — тело максимум `{channel}` (`EMAIL`/`SMS`), и только если
+    у пользователя есть оба; адрес доставки НЕ принимается от клиента, берётся из `app_user`.
+  - Ответ **единообразный** независимо от существования пользователя (как login/join) + rate limiting.
+  - Код подтверждения: TTL ~15 мин, в БД только HMAC-SHA256 кода (`password_reset.code_hmac`).
+  - `POST /auth/password-reset/confirm` — новый пароль; после успеха отзываются ВСЕ refresh-сессии
+    на всех устройствах (bump `token_version` + пометка `refresh_token`). НЕ привязано к `device_id`.
+  - Лимит попыток confirm: **5 неудачных → `status = REVOKED`** (не только инкремент `attempts`).
+    Логика в сервисном слое, покрывается тестом.
+- **Recovery-инвайт — только два случая:**
+  - EMPLOYEE меняет устройство (пароля нет).
+  - FOUNDER сбрасывает пароль BRANCH_MANAGER: временный пароль + `must_change_password = true`,
+    все сессии менеджера отзываются, AuditLog `PASSWORD_RESET_BY_FOUNDER`. Инициирует ТОЛЬКО FOUNDER.
+  - Для FOUNDER recovery-инвайта НЕТ. Потеря доступа и к email, и к телефону → только admin CLI
+    (см. `docs/RUNBOOK.md`).
+
+## Дельты контракта (openapi) — к реализации в блоках (в)/(г)
+
+- `X-Device-Id` header (required) на `/auth/register|login|join|refresh|logout`.
+- `JoinRequest.password` — обязателен для инвайта роли BRANCH_MANAGER, запрещён для EMPLOYEE.
+- `POST /api/v1/employees/{employeeId}/recovery-invite`.
+- `POST /auth/password-reset/request` + `POST /auth/password-reset/confirm`.
+- `InviteStatus.EXPIRED` — вычисляемый (в БД только PENDING/USED/REVOKED).
