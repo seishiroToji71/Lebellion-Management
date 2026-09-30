@@ -57,6 +57,50 @@ class TokenIssuer(
         return Issued(access, raw, props.jwt.accessTtl.seconds)
     }
 
+    /**
+     * Rotates [current] within its existing family: marks it rotated and issues a successor bound to the
+     * same [deviceId]. The family's [RefreshToken.absoluteExpiresAt] is carried forward unchanged — rotation
+     * slides the inactivity window but never extends the absolute cap. Assumes [current] is live and the
+     * caller holds its row lock; expiry/theft checks live in RefreshService.
+     */
+    fun rotate(current: RefreshToken, user: AppUser, deviceId: String): Issued {
+        val now = clock.instant()
+        val raw = codes.opaqueToken()
+
+        // Flush the rotate-mark BEFORE inserting the successor: the partial-unique "one live token per
+        // family" index would reject two live rows if Hibernate ordered the INSERT before this UPDATE.
+        current.rotatedAt = now
+        refreshTokens.saveAndFlush(current)
+
+        val sliding = if (user.role == Role.EMPLOYEE) props.refresh.employeeSliding else props.refresh.managerSliding
+        val absolute = current.absoluteExpiresAt
+        val slidingExpiry = now.plus(sliding)
+        val expiresAt = if (absolute != null && slidingExpiry.isAfter(absolute)) absolute else slidingExpiry
+
+        refreshTokens.save(
+            RefreshToken(
+                organizationId = current.organizationId,
+                userId = current.userId,
+                familyId = current.familyId,
+                tokenHash = hasher.sha256Hex(raw),
+                deviceId = deviceId,
+                issuedAt = now,
+                expiresAt = expiresAt,
+                parentId = current.id,
+                absoluteExpiresAt = absolute,
+            ),
+        )
+        val access = jwtService.issueAccessToken(
+            userId = current.userId,
+            organizationId = current.organizationId,
+            role = user.role.name,
+            tokenVersion = user.tokenVersion,
+            deviceId = deviceId,
+            now = now,
+        )
+        return Issued(access, raw, props.jwt.accessTtl.seconds)
+    }
+
     private fun ttls(role: Role, now: Instant): Pair<Duration, Instant?> = when (role) {
         Role.EMPLOYEE -> props.refresh.employeeSliding to null
         else -> props.refresh.managerSliding to now.plus(props.refresh.managerAbsolute)

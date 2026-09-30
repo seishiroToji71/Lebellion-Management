@@ -38,6 +38,34 @@ interface RefreshTokenRepository : JpaRepository<RefreshToken, UUID> {
 
     fun findByUserId(userId: UUID): List<RefreshToken>
 
+    /** Locks the presented token's row so concurrent refreshes with the same token serialize. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from RefreshToken r where r.tokenHash = :tokenHash")
+    fun findByTokenHashForUpdate(@Param("tokenHash") tokenHash: String): RefreshToken?
+
+    /** The single live (not rotated, not revoked) token of a family — used by the grace path. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select r from RefreshToken r where r.familyId = :familyId and r.rotatedAt is null and r.revokedAt is null")
+    fun findLiveByFamilyForUpdate(@Param("familyId") familyId: UUID): RefreshToken?
+
+    /**
+     * Revokes every not-yet-revoked token of a family (live + rotated ancestors). Returns the count,
+     * so callers can tell a real kill (theft) from a no-op on an already-dead family (benign replay).
+     */
+    @Modifying
+    @Query(
+        """
+        update RefreshToken r
+           set r.revokedAt = :now, r.revokedReason = :reason
+         where r.familyId = :familyId and r.revokedAt is null
+        """,
+    )
+    fun revokeAllActiveForFamily(
+        @Param("familyId") familyId: UUID,
+        @Param("now") now: Instant,
+        @Param("reason") reason: String,
+    ): Int
+
     @Modifying
     @Query(
         """

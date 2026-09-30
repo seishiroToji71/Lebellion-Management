@@ -22,6 +22,10 @@ data class LoginRequest(
     @field:NotBlank val password: String,
 )
 
+data class RefreshRequest(
+    @field:NotBlank val refreshToken: String,
+)
+
 data class ChangePasswordRequest(
     @field:NotBlank val currentPassword: String,
     @field:NotBlank @field:Size(min = 10, max = 128) val newPassword: String,

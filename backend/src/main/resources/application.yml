@@ -26,6 +26,9 @@ lebellion:
       employee-sliding: P60D
       manager-sliding: P30D
       manager-absolute: P90D
+      # Grace window: a just-rotated token still works this long for honest offline retries
+      # (same device only). Reuse past it revokes the whole family (theft detection).
+      grace: PT30S
     invite:
       hmac-secret: ${INVITE_HMAC_SECRET:dev-insecure-invite-hmac-secret-change-me}
       ttl: P7D

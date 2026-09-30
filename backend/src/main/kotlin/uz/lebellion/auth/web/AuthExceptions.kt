@@ -3,6 +3,9 @@ package uz.lebellion.auth.web
 /** Identical 401 for unknown principal / wrong secret / deactivated — no enumeration. */
 class InvalidCredentialsException : RuntimeException("Invalid credentials")
 
+/** 401 for refresh: token unknown / expired / rotated-outside-grace / revoked / device mismatch. */
+class InvalidTokenException : RuntimeException("Invalid token")
+
 class RegistrationDisabledException : RuntimeException("Registration is disabled")
 
 class ConflictException(message: String) : RuntimeException(message)

@@ -16,7 +16,7 @@ import java.time.Duration
 @ConfigurationProperties(prefix = "lebellion.auth")
 data class AuthProperties(
     val jwt: Jwt = Jwt("", Duration.ofMinutes(15)),
-    val refresh: Refresh = Refresh(Duration.ofDays(60), Duration.ofDays(30), Duration.ofDays(90)),
+    val refresh: Refresh = Refresh(Duration.ofDays(60), Duration.ofDays(30), Duration.ofDays(90), Duration.ofSeconds(30)),
     val invite: Invite = Invite("", Duration.ofDays(7)),
     val passwordReset: PasswordReset = PasswordReset("", Duration.ofMinutes(15), 5),
     /** Self-serve organization registration; disabled by default (see contract). */
@@ -40,6 +40,9 @@ data class AuthProperties(
         val employeeSliding: Duration,
         val managerSliding: Duration,
         val managerAbsolute: Duration,
+        /** After a token is rotated it stays usable this long, so an honest offline retry does not
+         *  trip theft detection (same device only). Reuse past this window revokes the family. */
+        val grace: Duration,
     )
 
     data class Invite @ConstructorBinding constructor(

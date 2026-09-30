@@ -17,6 +17,10 @@ class GlobalExceptionHandler {
     fun invalidCredentials(e: InvalidCredentialsException) =
         error(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "Invalid credentials")
 
+    @ExceptionHandler(InvalidTokenException::class)
+    fun invalidToken(e: InvalidTokenException) =
+        error(HttpStatus.UNAUTHORIZED, "INVALID_TOKEN", "Invalid token")
+
     @ExceptionHandler(RegistrationDisabledException::class)
     fun registrationDisabled(e: RegistrationDisabledException) =
         error(HttpStatus.FORBIDDEN, "REGISTRATION_DISABLED", "Registration is disabled")
