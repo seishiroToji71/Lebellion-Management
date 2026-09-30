@@ -32,6 +32,14 @@ class DbBackedJwtAuthenticationConverter(
             ?: throw InvalidBearerTokenException("missing token_version")
         if (tokenVersion != user.tokenVersion) throw InvalidBearerTokenException("token_version mismatch")
 
+        // org_id / role must be present AND consistent with the DB. Authorization always uses the DB
+        // values (single source of truth), but a token whose org_id/role claim is missing or tampered
+        // is rejected outright — a forged or stale claim can never cross tenants or escalate a role.
+        val orgClaim = jwt.getClaimAsString("org_id") ?: throw InvalidBearerTokenException("missing org_id")
+        if (orgClaim != user.organizationId.toString()) throw InvalidBearerTokenException("org_id mismatch")
+        val roleClaim = jwt.getClaimAsString("role") ?: throw InvalidBearerTokenException("missing role")
+        if (roleClaim != user.role.name) throw InvalidBearerTokenException("role mismatch")
+
         val principal = AuthPrincipal(
             userId = user.id!!,
             organizationId = user.organizationId,
