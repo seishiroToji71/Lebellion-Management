@@ -10,6 +10,8 @@ data class AuthPrincipal(
     val userId: UUID,
     val organizationId: UUID,
     val role: Role,
+    /** The caller's branch: set for BRANCH_MANAGER (scopes them to it), null for FOUNDER/EMPLOYEE. */
+    val branchId: UUID?,
     val deviceId: String?,
 )
 

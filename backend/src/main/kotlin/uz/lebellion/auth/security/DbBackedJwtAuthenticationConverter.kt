@@ -44,6 +44,7 @@ class DbBackedJwtAuthenticationConverter(
             userId = user.id!!,
             organizationId = user.organizationId,
             role = user.role,
+            branchId = user.branchId,
             deviceId = jwt.getClaimAsString("device_id"),
         )
         return AuthAuthentication(principal, listOf(SimpleGrantedAuthority("ROLE_${user.role.name}")))

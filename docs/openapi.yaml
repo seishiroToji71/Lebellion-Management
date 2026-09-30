@@ -509,7 +509,9 @@ paths:
       - $ref: "#/components/parameters/XAppVersion"
     get:
       summary: List branches (paginated)
-      description: FOUNDER sees all org branches; BRANCH_MANAGER sees only their own branch.
+      description: |
+        FOUNDER sees all org branches; BRANCH_MANAGER sees only their own branch.
+        EMPLOYEE is not permitted (`403 FORBIDDEN`).
       operationId: listBranches
       tags:
         - Organization
@@ -525,8 +527,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/BranchPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "426":
           $ref: "#/components/responses/UpgradeRequired"
     post:
@@ -610,7 +616,10 @@ paths:
       - $ref: "#/components/parameters/XAppVersion"
     get:
       summary: List units (paginated)
-      description: FOUNDER sees all org units; BRANCH_MANAGER sees only their own branch's units.
+      description: |
+        FOUNDER sees all org units; BRANCH_MANAGER sees only their own branch's units.
+        An optional `branchId` filter is intersected with the caller's scope (a manager asking for
+        another branch gets an empty page). EMPLOYEE is not permitted (`403 FORBIDDEN`).
       operationId: listUnits
       tags:
         - Organization
@@ -632,8 +641,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UnitPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "426":
           $ref: "#/components/responses/UpgradeRequired"
 

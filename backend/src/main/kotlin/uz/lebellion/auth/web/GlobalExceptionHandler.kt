@@ -33,6 +33,14 @@ class GlobalExceptionHandler {
     fun inviteAlreadyUsed(e: InviteAlreadyUsedException) =
         error(HttpStatus.CONFLICT, "INVITE_ALREADY_USED", "This invite code has already been used")
 
+    @ExceptionHandler(NotFoundException::class)
+    fun notFound(e: NotFoundException) =
+        error(HttpStatus.NOT_FOUND, "NOT_FOUND", e.message ?: "Not found")
+
+    @ExceptionHandler(ForbiddenException::class)
+    fun forbidden(e: ForbiddenException) =
+        error(HttpStatus.FORBIDDEN, "FORBIDDEN", e.message ?: "Forbidden")
+
     @ExceptionHandler(DataIntegrityViolationException::class)
     fun dataIntegrity(e: DataIntegrityViolationException) =
         error(HttpStatus.CONFLICT, "CONFLICT", "Already exists")
