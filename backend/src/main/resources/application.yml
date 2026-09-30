@@ -13,8 +13,11 @@ spring:
 
 server:
   port: ${PORT:8080}
-  # Caddy is the single reverse proxy; let Spring honour forwarded headers.
-  forward-headers-strategy: framework
+  # Client IP is resolved by ClientIpResolver from the RAW X-Forwarded-For (rightmost trusted hop,
+  # honouring trusted-proxy-count) — NOT by Spring. Spring's `framework` strategy keys off the LEFTMOST
+  # (client-spoofable) XFF entry and strips the header, which would defeat per-IP rate limiting.
+  # Proto/host forwarding (for absolute/signed URLs) will be added explicitly in the photo phase.
+  forward-headers-strategy: none
 
 lebellion:
   auth:

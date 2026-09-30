@@ -12,4 +12,7 @@ object RevocationReason {
     const val TOKEN_REUSE = "TOKEN_REUSE"
     const val DEVICE_MISMATCH = "DEVICE_MISMATCH"
     const val EXPIRED = "EXPIRED"
+
+    /** Refresh presented for a user who is gone/deactivated — kill the family (instant lockout). */
+    const val USER_INACTIVE = "USER_INACTIVE"
 }

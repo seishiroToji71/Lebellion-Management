@@ -54,9 +54,14 @@ class RefreshService(
             throw InvalidTokenException()
         }
 
-        // (3) User must still exist and be active (immediate lockout on deactivation).
+        // (3) User must still exist and be active. Belt-and-suspenders: the deactivation flow (block г)
+        //     revokes sessions, but we ALSO revoke the family here so a deactivated user is locked out on
+        //     the very next refresh regardless of that flow (instant revocation > performance, as for is_active).
         val user = users.findById(token.userId).orElse(null)
-        if (user == null || !user.isActive) throw InvalidTokenException()
+        if (user == null || !user.isActive) {
+            refreshTokens.revokeAllActiveForFamily(token.familyId, now, RevocationReason.USER_INACTIVE)
+            throw InvalidTokenException()
+        }
 
         // (4) Already-revoked token: the family is dead (logout/theft/password reset). Replaying it is
         //     benign if nothing is left live; if a live remnant somehow exists, kill it and flag theft.
