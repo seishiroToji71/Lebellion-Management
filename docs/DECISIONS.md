@@ -172,3 +172,18 @@
 - `POST /api/v1/employees/{employeeId}/recovery-invite`.
 - `POST /api/v1/auth/password-reset/request` + `POST /api/v1/auth/password-reset/confirm`.
 - `InviteStatus.EXPIRED` — вычисляемый (в БД только PENDING/USED/REVOKED).
+
+## Phase 1 — org management (блок (r), под-шаг r1: branches/units) (accepted)
+
+- **Keyset-пагинация (limit+cursor)** по `(created_at, id)`; курсор непрозрачный
+  (base64url от `<isoInstant>|<uuid>`). **Первая страница использует sentinel floor
+  (`Instant.EPOCH` / нулевой UUID) вместо nullable-курсора** — иначе Postgres не выводит тип
+  bare-параметра в `:param is null` (`ERROR: could not determine data type of parameter`).
+  Предикат keyset применяется всегда, все параметры типизированы; overfetch `limit + 1`
+  сигнализирует о наличии следующей страницы.
+- Роль-проверки в сервисном слое: создание филиала — только FOUNDER; создание/список юнитов —
+  FOUNDER или BRANCH_MANAGER, менеджер заперт в своём филиале (чужой филиал при создании → `404`
+  без утечки существования; фильтр списка пересекается со scope → пустая страница); EMPLOYEE → `403`.
+  `AuthPrincipal.branchId` добавлен — scope менеджера читается из БД на каждый запрос (как `is_active`).
+- **Отдельный `revoke` инвайта войдёт в invites-слайс (r2), не в r1.** `reissue` (отзыв + новый код)
+  и `revoke` (без переиздания, когда позиция больше не нужна) сосуществуют — это не альтернатива.
