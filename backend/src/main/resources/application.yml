@@ -57,3 +57,5 @@ lebellion:
       # compromised FOUNDER/MANAGER account cannot churn out codes. revoke is uncapped (no secret).
       invite-create:               { limit: 20, window: PT1M }
       invite-reissue:              { limit: 20, window: PT1M }
+      # Recovery-invite also mints a secret (and, for a manager, a temporary password) — same cap.
+      recovery-invite:             { limit: 20, window: PT1M }

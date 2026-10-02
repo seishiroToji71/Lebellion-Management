@@ -26,6 +26,45 @@ interface AppUserRepository : JpaRepository<AppUser, UUID> {
     fun findByIdAndOrganizationId(id: UUID, organizationId: UUID): AppUser?
     fun existsByEmailIgnoreCase(email: String): Boolean
     fun existsByPhone(phone: String): Boolean
+
+    /** Locks the user row so deactivate / recovery-invite serialize against concurrent writes. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select u from AppUser u where u.id = :id and u.organizationId = :orgId")
+    fun findByIdAndOrganizationIdForUpdate(@Param("id") id: UUID, @Param("orgId") orgId: UUID): AppUser?
+
+    /**
+     * Keyset page of users over (createdAt, id). Branch is resolved as `coalesce(unit.branch, user.branch)`
+     * so EMPLOYEEs (whose branch lives on their unit) scope correctly. Every filter is a typed flag+value
+     * pair — never a bare `:param is null`, which Postgres cannot type (see BranchRepository). Pass a
+     * `*By* = false` with a throwaway value to disable a dimension; the manager scope reuses the same
+     * resolved-branch expression.
+     */
+    @Query(
+        """
+        select u from AppUser u left join OrgUnit unit on unit.id = u.unitId
+         where u.organizationId = :orgId
+           and (:scoped = false or coalesce(unit.branchId, u.branchId) = :scopeBranch)
+           and (:filterByBranch = false or coalesce(unit.branchId, u.branchId) = :branchFilter)
+           and (:filterByUnit = false or u.unitId = :unitFilter)
+           and (:filterByActive = false or u.isActive = :activeValue)
+           and (u.createdAt > :afterCreatedAt or (u.createdAt = :afterCreatedAt and u.id > :afterId))
+         order by u.createdAt asc, u.id asc
+        """,
+    )
+    fun pageEmployees(
+        @Param("orgId") orgId: UUID,
+        @Param("scoped") scoped: Boolean,
+        @Param("scopeBranch") scopeBranch: UUID,
+        @Param("filterByBranch") filterByBranch: Boolean,
+        @Param("branchFilter") branchFilter: UUID,
+        @Param("filterByUnit") filterByUnit: Boolean,
+        @Param("unitFilter") unitFilter: UUID,
+        @Param("filterByActive") filterByActive: Boolean,
+        @Param("activeValue") activeValue: Boolean,
+        @Param("afterCreatedAt") afterCreatedAt: Instant,
+        @Param("afterId") afterId: UUID,
+        pageable: Pageable,
+    ): List<AppUser>
 }
 
 /**

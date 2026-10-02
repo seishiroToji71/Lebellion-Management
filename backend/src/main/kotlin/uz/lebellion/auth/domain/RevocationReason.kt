@@ -15,4 +15,10 @@ object RevocationReason {
 
     /** Refresh presented for a user who is gone/deactivated — kill the family (instant lockout). */
     const val USER_INACTIVE = "USER_INACTIVE"
+
+    /** An admin deactivated the user via /employees/{id}/deactivate — immediate sign-out everywhere. */
+    const val DEACTIVATED = "DEACTIVATED"
+
+    /** A FOUNDER reset a BRANCH_MANAGER's password (recovery-invite) — kill the compromised session now. */
+    const val PASSWORD_RESET = "PASSWORD_RESET"
 }
