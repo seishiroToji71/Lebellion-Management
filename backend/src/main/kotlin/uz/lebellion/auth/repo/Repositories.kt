@@ -1,6 +1,7 @@
 package uz.lebellion.auth.repo
 
 import jakarta.persistence.LockModeType
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Lock
 import org.springframework.data.jpa.repository.Modifying
@@ -8,8 +9,10 @@ import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import uz.lebellion.auth.domain.AppUser
 import uz.lebellion.auth.domain.Invite
+import uz.lebellion.auth.domain.InviteStatus
 import uz.lebellion.auth.domain.Organization
 import uz.lebellion.auth.domain.RefreshToken
+import uz.lebellion.auth.domain.Role
 import java.time.Instant
 import java.util.UUID
 
@@ -25,10 +28,135 @@ interface AppUserRepository : JpaRepository<AppUser, UUID> {
     fun existsByPhone(phone: String): Boolean
 }
 
+/**
+ * Projection for the invite list. `branchId` is resolved as `coalesce(unit.branch, invite.branch)`
+ * so EMPLOYEE invites (which carry a unit, never a branch) still expose a branch; recovery invites
+ * are filtered out upstream, so a resolved row always has a branch.
+ */
+data class InviteListRow(
+    val id: UUID,
+    val role: Role,
+    val branchId: UUID?,
+    val unitId: UUID?,
+    val status: InviteStatus,
+    val createdBy: UUID,
+    val createdAt: Instant,
+    val expiresAt: Instant,
+    val usedAt: Instant?,
+)
+
 interface InviteRepository : JpaRepository<Invite, UUID> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select i from Invite i where i.codeHmac = :hmac")
     fun findByCodeHmacForUpdate(@Param("hmac") hmac: String): Invite?
+
+    /** Locks the invite row so reissue/revoke serialize against a concurrent join (locks the same row). */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select i from Invite i where i.id = :id and i.organizationId = :orgId")
+    fun findByIdAndOrganizationIdForUpdate(@Param("id") id: UUID, @Param("orgId") orgId: UUID): Invite?
+
+    // Keyset pagination over (createdAt, id); see BranchRepository for the floor-cursor rationale.
+    // Recovery invites (targetEmployeeId set) are excluded — they have no branch and belong to the
+    // employees slice. The expiresAt window is always applied with concrete bounds: PENDING uses
+    // (now, +inf], EXPIRED uses (epoch, now], every other filter uses the full (epoch, +inf] range,
+    // so the status/EXPIRED split needs no nullable parameter.
+
+    @Query(
+        """
+        select new uz.lebellion.auth.repo.InviteListRow(
+            i.id, i.role, coalesce(u.branchId, i.branchId), i.unitId,
+            i.status, i.createdBy, i.createdAt, i.expiresAt, i.usedAt)
+          from Invite i left join OrgUnit u on u.id = i.unitId
+         where i.organizationId = :orgId
+           and i.targetEmployeeId is null
+           and i.expiresAt > :expiresAfter and i.expiresAt <= :expiresBefore
+           and (i.createdAt > :afterCreatedAt or (i.createdAt = :afterCreatedAt and i.id > :afterId))
+         order by i.createdAt asc, i.id asc
+        """,
+    )
+    fun pageList(
+        @Param("orgId") orgId: UUID,
+        @Param("expiresAfter") expiresAfter: Instant,
+        @Param("expiresBefore") expiresBefore: Instant,
+        @Param("afterCreatedAt") afterCreatedAt: Instant,
+        @Param("afterId") afterId: UUID,
+        pageable: Pageable,
+    ): List<InviteListRow>
+
+    @Query(
+        """
+        select new uz.lebellion.auth.repo.InviteListRow(
+            i.id, i.role, coalesce(u.branchId, i.branchId), i.unitId,
+            i.status, i.createdBy, i.createdAt, i.expiresAt, i.usedAt)
+          from Invite i left join OrgUnit u on u.id = i.unitId
+         where i.organizationId = :orgId
+           and i.targetEmployeeId is null
+           and i.status = :status
+           and i.expiresAt > :expiresAfter and i.expiresAt <= :expiresBefore
+           and (i.createdAt > :afterCreatedAt or (i.createdAt = :afterCreatedAt and i.id > :afterId))
+         order by i.createdAt asc, i.id asc
+        """,
+    )
+    fun pageListByStatus(
+        @Param("orgId") orgId: UUID,
+        @Param("status") status: InviteStatus,
+        @Param("expiresAfter") expiresAfter: Instant,
+        @Param("expiresBefore") expiresBefore: Instant,
+        @Param("afterCreatedAt") afterCreatedAt: Instant,
+        @Param("afterId") afterId: UUID,
+        pageable: Pageable,
+    ): List<InviteListRow>
+
+    /** Manager scope: `u.branchId = :scope` requires a unit, so only EMPLOYEE invites in that branch show. */
+    @Query(
+        """
+        select new uz.lebellion.auth.repo.InviteListRow(
+            i.id, i.role, u.branchId, i.unitId,
+            i.status, i.createdBy, i.createdAt, i.expiresAt, i.usedAt)
+          from Invite i join OrgUnit u on u.id = i.unitId
+         where i.organizationId = :orgId
+           and u.branchId = :scope
+           and i.targetEmployeeId is null
+           and i.expiresAt > :expiresAfter and i.expiresAt <= :expiresBefore
+           and (i.createdAt > :afterCreatedAt or (i.createdAt = :afterCreatedAt and i.id > :afterId))
+         order by i.createdAt asc, i.id asc
+        """,
+    )
+    fun pageListInBranch(
+        @Param("orgId") orgId: UUID,
+        @Param("scope") scope: UUID,
+        @Param("expiresAfter") expiresAfter: Instant,
+        @Param("expiresBefore") expiresBefore: Instant,
+        @Param("afterCreatedAt") afterCreatedAt: Instant,
+        @Param("afterId") afterId: UUID,
+        pageable: Pageable,
+    ): List<InviteListRow>
+
+    @Query(
+        """
+        select new uz.lebellion.auth.repo.InviteListRow(
+            i.id, i.role, u.branchId, i.unitId,
+            i.status, i.createdBy, i.createdAt, i.expiresAt, i.usedAt)
+          from Invite i join OrgUnit u on u.id = i.unitId
+         where i.organizationId = :orgId
+           and u.branchId = :scope
+           and i.targetEmployeeId is null
+           and i.status = :status
+           and i.expiresAt > :expiresAfter and i.expiresAt <= :expiresBefore
+           and (i.createdAt > :afterCreatedAt or (i.createdAt = :afterCreatedAt and i.id > :afterId))
+         order by i.createdAt asc, i.id asc
+        """,
+    )
+    fun pageListInBranchByStatus(
+        @Param("orgId") orgId: UUID,
+        @Param("scope") scope: UUID,
+        @Param("status") status: InviteStatus,
+        @Param("expiresAfter") expiresAfter: Instant,
+        @Param("expiresBefore") expiresBefore: Instant,
+        @Param("afterCreatedAt") afterCreatedAt: Instant,
+        @Param("afterId") afterId: UUID,
+        pageable: Pageable,
+    ): List<InviteListRow>
 }
 
 interface RefreshTokenRepository : JpaRepository<RefreshToken, UUID> {

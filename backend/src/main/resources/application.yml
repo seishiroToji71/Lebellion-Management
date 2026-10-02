@@ -53,3 +53,7 @@ lebellion:
       join-ip:                     { limit: 5,  window: PT1M }
       password-reset-request-ip:   { limit: 3,  window: PT15M }
       password-reset-request-user: { limit: 3,  window: PT15M }
+      # Issuing/reissuing an invite mints a secret: capped per caller (userId), not per IP, so a
+      # compromised FOUNDER/MANAGER account cannot churn out codes. revoke is uncapped (no secret).
+      invite-create:               { limit: 20, window: PT1M }
+      invite-reissue:              { limit: 20, window: PT1M }
