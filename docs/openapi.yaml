@@ -382,10 +382,15 @@ paths:
       description: |
         Roles: FOUNDER may invite BRANCH_MANAGER or EMPLOYEE anywhere in the org; BRANCH_MANAGER
         may invite EMPLOYEE only, and only into units of their OWN branch.
-        - For `role=EMPLOYEE`: `unitId` is required (branch is derived from the unit).
-        - For `role=BRANCH_MANAGER`: `branchId` is required and `unitId` must be omitted.
+        - For `role=EMPLOYEE`: `unitId` is required (branch is derived from the unit); `branchId`,
+          `email` and `phone` must be omitted.
+        - For `role=BRANCH_MANAGER`: `branchId` is required, `unitId` must be omitted, and at least
+          one of `email`/`phone` is required — the Founder sets the manager's login contact on the
+          invite (the manager has no self-service signup).
         The target branch/unit must belong to the caller's organization (and, for a
         BRANCH_MANAGER caller, to their own branch). The plaintext `code` is returned once.
+        Rate limited per caller (`429 RATE_LIMITED`): minting invite codes is capped even for an
+        authorized Founder/Manager, so a compromised account cannot issue secrets without bound.
       operationId: createInvite
       tags:
         - Invites
@@ -418,6 +423,8 @@ paths:
                 $ref: "#/components/schemas/Error"
         "426":
           $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
     get:
       summary: List pending invites (paginated)
       description: |
@@ -464,7 +471,10 @@ paths:
       description: |
         Revokes the existing (unused) code for this invite and generates a fresh code with a
         new TTL, keeping the same branch/unit/role binding. Returns the new plaintext code once.
-        Only allowed while the invite is still PENDING. Same role scoping as create.
+        Allowed while the invite is still PENDING — including a computed `EXPIRED` one (stored
+        PENDING, past `expiresAt`): reissuing is exactly how a lapsed code is refreshed. A `USED`
+        or `REVOKED` invite is not reissuable (`409`). Same role scoping as create, and rate
+        limited per caller (`429 RATE_LIMITED`).
       operationId: reissueInvite
       tags:
         - Invites
@@ -497,6 +507,53 @@ paths:
                 $ref: "#/components/schemas/Error"
         "409":
           description: Invite is not in a reissuable (PENDING) state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
+  /api/v1/invites/{inviteId}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: inviteId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Revoke an invite (kill the code without reissuing)
+      description: |
+        Permanently revokes a PENDING invite (its code can no longer be redeemed), without minting
+        a replacement — use this when the position is no longer needed. Coexists with `reissue`
+        (revoke + new code); it is not an alternative to it. Idempotent: revoking an already-REVOKED
+        invite returns `204`. A `USED` invite cannot be revoked (`409`). Same role scoping as create
+        (an invite outside the caller's scope is reported as `404`). Not rate limited — it mints no
+        secret.
+      operationId: revokeInvite
+      tags:
+        - Invites
+      security:
+        - bearerAuth: []
+      responses:
+        "204":
+          description: Invite revoked (or already revoked — idempotent)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Invite not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Invite is not in a revocable state (already USED)
           content:
             application/json:
               schema:
@@ -1064,6 +1121,19 @@ components:
           type: [string, "null"]
           format: uuid
           description: Required when role=EMPLOYEE. Must be omitted for BRANCH_MANAGER.
+        email:
+          type: [string, "null"]
+          format: email
+          maxLength: 320
+          description: >-
+            BRANCH_MANAGER login contact, set by the Founder on the invite. At least one of
+            `email`/`phone` is required when role=BRANCH_MANAGER; both must be omitted for EMPLOYEE.
+        phone:
+          type: [string, "null"]
+          maxLength: 20
+          description: >-
+            BRANCH_MANAGER login contact (E.164), set by the Founder. At least one of
+            `email`/`phone` is required when role=BRANCH_MANAGER; both must be omitted for EMPLOYEE.
         expiresInMinutes:
           type: integer
           minimum: 1
@@ -1116,14 +1186,17 @@ components:
 
     InviteSummary:
       type: object
-      description: Invite metadata WITHOUT the code (used in list responses).
+      description: >-
+        Invite metadata for list responses. Never carries the code — not even masked; the plaintext
+        is shown once, only in the create/reissue response. Carries no email/phone (personal data).
       required:
         - id
         - role
         - branchId
         - status
-        - expiresAt
+        - createdBy
         - createdAt
+        - expiresAt
       properties:
         id:
           type: string
@@ -1133,17 +1206,28 @@ components:
         branchId:
           type: string
           format: uuid
+          description: For an EMPLOYEE invite this is derived from the unit's branch.
         unitId:
           type: [string, "null"]
           format: uuid
         status:
-          $ref: "#/components/schemas/InviteStatus"
-        expiresAt:
+          allOf:
+            - $ref: "#/components/schemas/InviteStatus"
+          description: EXPIRED is computed from expiresAt at read time; only PENDING/USED/REVOKED are stored.
+        createdBy:
           type: string
-          format: date-time
+          format: uuid
+          description: The user (Founder/Manager) who issued the invite.
         createdAt:
           type: string
           format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        usedAt:
+          type: [string, "null"]
+          format: date-time
+          description: When the invite was consumed; null unless status is USED.
 
     CreateBranchRequest:
       type: object

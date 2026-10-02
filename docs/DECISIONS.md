@@ -187,3 +187,45 @@
   `AuthPrincipal.branchId` добавлен — scope менеджера читается из БД на каждый запрос (как `is_active`).
 - **Отдельный `revoke` инвайта войдёт в invites-слайс (r2), не в r1.** `reissue` (отзыв + новый код)
   и `revoke` (без переиздания, когда позиция больше не нужна) сосуществуют — это не альтернатива.
+
+## Phase 1 — org management (блок (r), под-шаг r2: invites) (accepted)
+
+- **Эндпоинты:** `POST /invites` (create), `GET /invites` (list, keyset+фильтр `status`),
+  `POST /invites/{id}/reissue`, **`POST /invites/{id}/revoke`** (новый путь в контракте).
+- **Матрица ролей:** FOUNDER приглашает EMPLOYEE/BRANCH_MANAGER где угодно в орг; BRANCH_MANAGER —
+  только EMPLOYEE и только в unit **своего** филиала, и управляет (reissue/revoke/list) только
+  EMPLOYEE-инвайтами своего филиала. Чужой scope → `404` (без утечки существования); EMPLOYEE → `403`.
+  Менеджер НЕ может выдать MANAGER-инвайт (`403`).
+- **Контакт MANAGER-инвайта (вариант B, закрытие дыры контракта):** `CreateInviteRequest` получил
+  `email`/`phone`; для `BRANCH_MANAGER` обязателен хотя бы один (иначе `consumeManager` в join не дожимается),
+  для `EMPLOYEE` оба запрещены (`400`). Нормализация: email → trim+lowercase, phone → trim.
+- **`branchId` в ответах/списке выводится join'ом к unit** (`coalesce(unit.branchId, invite.branchId)`):
+  схема (`chk_invite_shape`) держит `branch_id = NULL` у EMPLOYEE-инвайта (филиал через unit —
+  единый источник истины, как `EMPLOYEE.branch_id = NULL`). Денормализация потребовала бы миграции и
+  противоречила бы инварианту — поэтому join, миграций в r2 нет.
+- **Recovery-инвайты исключены из листинга** (`targetEmployeeId is null`): у них нет филиала, а
+  `InviteSummary.branchId` обязателен. Recovery (create/list под сотрудником) уходит в employees-слайс.
+- **`InviteSummary` без кода (даже маскированного) и без email/phone** (PII; правило «no personal data»).
+  Сырой `code` отдаётся ровно один раз — в ответе create/reissue. Добавлены `createdBy`, `usedAt`.
+  `status` — вычисляемый view: stored PENDING с истёкшим `expiresAt` читается как `EXPIRED`.
+- **Фильтр `status` + вычисляемый EXPIRED без `:param is null`** (урок r1): запрошенный статус
+  транслируется в типизированные параметры — stored-status (enum) + окно `expiresAt`
+  (`expiresAfter`/`expiresBefore` с краями EPOCH / 9999-12-31). PENDING → `(now, +inf]`,
+  EXPIRED → `(epoch, now]`, прочее → полный диапазон. Четыре явных keyset-метода (scope × status),
+  в стиле `BranchRepository.page/pageInBranch`; keyset по `(createdAt, id)` с sentinel-floor.
+- **Reissue = перезапись `code_hmac` на той же строке** (атомарно гасит старый код и ставит новый,
+  одним UPDATE); допустим только для stored PENDING (включая вычисляемый EXPIRED — так обновляют
+  просроченный код), USED/REVOKED → `409`. Пессимистичная блокировка строки
+  (`findByIdAndOrganizationIdForUpdate`) сериализует reissue/revoke с конкурентным join (join лочит
+  ту же строку по `code_hmac`). Reissue не продлевает ничего, кроме нового `expires_at`.
+- **Revoke = перевод в `REVOKED`** (код больше не резолвится в join): идемпотентно (`204` для уже
+  REVOKED), USED → `409`. **Без rate-limit** — секрет не минтит.
+- **Rate-limit create/reissue — per `userId`** (не IP), по 20/мин (`invite-create`/`invite-reissue`
+  в `application.yml`): минт/переиздание секрета не должно быть безлимитным даже для авторизованной
+  роли — снижает цену компрометации аккаунта FOUNDER/MANAGER. Revoke не лимитируется.
+- **Audit:** `INVITE_CREATED` / `INVITE_REISSUED` / `INVITE_REVOKED` (`target_type = INVITE`),
+  metadata только `{role, branchId|unitId}` — без кода, email, phone.
+- **Тесты:** `InviteManagementIT` (11) + `InviteRateLimitIT` (1), Testcontainers; покрыто: вывод
+  филиала, end-to-end join по выданному коду, reissue убивает старый код и выдаёт рабочий новый,
+  revoke-идемпотентность, терминальные `409`, фильтры status (вкл. EXPIRED через сдвиг `expires_at` в
+  прошлое на реальных часах), scope менеджера, tenant-isolation, keyset-пагинация, лимит 429.
