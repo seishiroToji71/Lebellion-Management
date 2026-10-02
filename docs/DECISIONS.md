@@ -229,3 +229,47 @@
   филиала, end-to-end join по выданному коду, reissue убивает старый код и выдаёт рабочий новый,
   revoke-идемпотентность, терминальные `409`, фильтры status (вкл. EXPIRED через сдвиг `expires_at` в
   прошлое на реальных часах), scope менеджера, tenant-isolation, keyset-пагинация, лимит 429.
+
+## Phase 1 — org management (блок (r), под-шаг r3: employees) (accepted)
+
+- **Эндпоинты:** `GET /employees` (список, фильтры `branchId`/`unitId`/`active` + keyset),
+  `POST /employees/{id}/deactivate`, **`POST /employees/{id}/recovery-invite`** (новый путь в контракте;
+  EMPLOYEE и BRANCH_MANAGER одним `issueRecoveryInvite`).
+- **Миграций нет:** `AppUser` уже несёт `is_active`/`token_version`/`must_change_password`/`password_hash`;
+  `revokeAllActiveForUser` и passwordless `consumeRecovery` (re-bind + отзыв старых сессий) уже есть.
+- **Матрица ролей:** list — FOUNDER вся орг, MANAGER свой филиал, EMPLOYEE → `403`. deactivate — FOUNDER
+  любой MANAGER/EMPLOYEE; MANAGER только EMPLOYEE своего филиала; нельзя себя (`409`), нельзя FOUNDER
+  (`409`); вне scope → `404`. recovery — EMPLOYEE-таргет инициирует FOUNDER или MANAGER своего филиала;
+  MANAGER-таргет — **только FOUNDER**; FOUNDER-таргет → `409` (восстановление единственного фаундера —
+  только admin CLI); неактивный → `409`; вне scope → `404`.
+- **deactivate — мгновенно:** `is_active=false` + `token_version++` + `revokeAllActiveForUser(DEACTIVATED)`;
+  access рубится на следующем запросе, refresh-семьи отозваны. Идемпотентно (`200`). Audit `EMPLOYEE_DEACTIVATED`.
+- **recovery — асимметрия по роли таргета (ключевое решение):**
+  - **EMPLOYEE** (замена телефона, не кража): при создании — только инвайт; сессии отзываются **на join**.
+    Мгновенного lockout нет, честный сотрудник не теряет доступ до ре-бинда. Audit `RECOVERY_INVITE_CREATED`.
+  - **BRANCH_MANAGER** (компрометация пароля): при **создании** — временный пароль (хеш) + `must_change_password=true`
+    + `revokeAllActiveForUser(PASSWORD_RESET)` + `token_version++` **немедленно** (сессия атакующего умирает сразу,
+    не дожидаясь join). Временный пароль отдаётся один раз (FOUNDER передаёт менеджеру), годен для `/login` с
+    другого устройства до смены. Audit `PASSWORD_RESET_BY_FOUNDER`.
+  - Join по recovery-коду passwordless в обоих случаях. Оба события пишет один `issueRecoveryInvite`.
+- **Один PENDING recovery-инвайт на пользователя** (`uq_invite_pending_recovery` — DB partial-unique из **V2**,
+  не новая миграция): повторный при живом PENDING → `409` (через `DataIntegrityViolation`, транзакция
+  откатывается целиком — для MANAGER побочные правки `password_hash`/`must_change_password`/`token_version`/
+  `revokeAll` тоже откатываются). Гонка закрыта на двух уровнях: DB partial-unique (финальный арбитр) +
+  пессимистичная блокировка строки таргета (`findByIdAndOrganizationIdForUpdate`, та же, что сериализует refresh
+  в блоке в) — параллельные запросы сериализуются, проигравший падает на insert в `409`, а не `500`.
+- **Резолв филиала `coalesce(unit.branchId, user.branchId)`** (у EMPLOYEE `branch_id = NULL`): keyset-список
+  возвращает сущность `AppUser`, join к unit только для предиката/scope. Фильтры — типизированные пары
+  флаг+значение (zero-UUID/boolean-сентинелы), **без `:param is null`** (урок r1). `UserProfile` переиспользован
+  (branchId из колонки → `null` у EMPLOYEE, как в `/me`; филиал виден через unit).
+- **Rate-limit recovery-invite — 20/мин per `userId`** (минтит секрет + для менеджера временный пароль). Deactivate без лимита.
+- **`RecoveryInviteResponse`** без `branchId`; `temporaryPassword` непустой только для MANAGER. Новые
+  константы `RevocationReason.DEACTIVATED` / `PASSWORD_RESET`.
+- **В r4 остаётся:** self-service `/auth/password-reset/request|confirm` и **enforcement `must_change_password`**
+  на `/login` (в r3 флаг только выставляется).
+- **Тесты:** `EmployeeManagementIT` (8) + `RecoveryInviteRateLimitIT` (1), Testcontainers. В т.ч. **зеркальный
+  негативный guard**: EMPLOYEE-recovery НЕ бампает `token_version` и НЕ отзывает сессии при создании (только на
+  join) — ловит регрессию, если кто-то скопирует `revokeAll` из MANAGER-ветки в общий код. Плюс **параллельный
+  тест** (два одновременных recovery для одного MANAGER-таргета): один `201`/один `409`/никогда `500`, и у
+  проигравшего нет частичных эффектов — `token_version` бампнут ровно один раз, в силе только пароль победителя,
+  аудит и revoke — по одному разу.

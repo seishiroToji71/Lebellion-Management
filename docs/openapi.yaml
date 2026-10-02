@@ -803,6 +803,76 @@ paths:
         "426":
           $ref: "#/components/responses/UpgradeRequired"
 
+  /api/v1/employees/{employeeId}/recovery-invite:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: employeeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Issue a recovery invite (re-bind a lost/replaced device; manager password reset)
+      description: |
+        Mints a one-time recovery code that re-binds an EXISTING user to a new device at join. Join
+        is passwordless in both cases — it revokes the user's old sessions and issues a fresh one.
+        Roles: for an EMPLOYEE target the initiator is the FOUNDER or the BRANCH_MANAGER of that
+        employee's own branch; for a BRANCH_MANAGER target the initiator is the FOUNDER only.
+        A FOUNDER cannot be recovered here (`409`; recovery of the sole founder is an admin-CLI
+        procedure — see docs/RUNBOOK.md). An inactive target is `409`.
+
+        Behaviour differs by target role, applied immediately at creation:
+        - EMPLOYEE (typically a lost/replaced phone, not theft): only the invite is created; the
+          user's existing sessions are revoked later, AT JOIN. No immediate lockout, so an honest
+          employee keeps access until they re-bind.
+        - BRANCH_MANAGER (typically a password compromise): a temporary password is generated and
+          stored with `mustChangePassword=true`, and ALL the manager's sessions are revoked with
+          their `tokenVersion` bumped RIGHT AWAY — the old/compromised session dies immediately, not
+          at join. The temporary password is returned once (for the Founder to relay) and lets the
+          manager log in via /login from another device before changing it.
+        Minting a code is rate limited per caller (`429`).
+      operationId: issueRecoveryInvite
+      tags:
+        - Employees
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecoveryInviteRequest"
+      responses:
+        "201":
+          description: Recovery invite created (code — and, for a manager, a temporary password — returned once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecoveryInviteResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Target not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: Target cannot be recovered via this endpoint (a FOUNDER, or an inactive user)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1228,6 +1298,52 @@ components:
           type: [string, "null"]
           format: date-time
           description: When the invite was consumed; null unless status is USED.
+
+    RecoveryInviteRequest:
+      type: object
+      properties:
+        expiresInMinutes:
+          type: integer
+          minimum: 1
+          maximum: 43200
+          default: 1440
+          description: TTL for the recovery code. Defaults to 24 hours.
+
+    RecoveryInviteResponse:
+      type: object
+      description: >-
+        Returned once on issue. Carries the one-time recovery `code`; for a BRANCH_MANAGER target it
+        also carries a one-time `temporaryPassword` (null for an EMPLOYEE, who has no password).
+      required:
+        - id
+        - code
+        - targetEmployeeId
+        - role
+        - expiresAt
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        code:
+          type: string
+          description: Plaintext recovery code. Shown ONCE; only its hash is stored.
+        targetEmployeeId:
+          type: string
+          format: uuid
+        role:
+          allOf:
+            - $ref: "#/components/schemas/InvitableRole"
+          description: The target user's role (EMPLOYEE or BRANCH_MANAGER); never FOUNDER.
+        temporaryPassword:
+          type: [string, "null"]
+          description: One-time temporary password; set only for a BRANCH_MANAGER target, null otherwise.
+        expiresAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
 
     CreateBranchRequest:
       type: object
