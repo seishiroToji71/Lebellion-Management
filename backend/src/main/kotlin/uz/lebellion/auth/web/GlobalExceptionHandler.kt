@@ -41,6 +41,10 @@ class GlobalExceptionHandler {
     fun forbidden(e: ForbiddenException) =
         error(HttpStatus.FORBIDDEN, "FORBIDDEN", e.message ?: "Forbidden")
 
+    @ExceptionHandler(MustChangePasswordException::class)
+    fun mustChangePassword(e: MustChangePasswordException) =
+        error(HttpStatus.FORBIDDEN, "MUST_CHANGE_PASSWORD", "Password change required")
+
     @ExceptionHandler(DataIntegrityViolationException::class)
     fun dataIntegrity(e: DataIntegrityViolationException) =
         error(HttpStatus.CONFLICT, "CONFLICT", "Already exists")

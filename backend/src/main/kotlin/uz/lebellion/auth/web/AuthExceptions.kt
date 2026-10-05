@@ -21,6 +21,9 @@ class NotFoundException(message: String) : RuntimeException(message)
 /** 403 — authenticated but the role (or branch scope) does not permit this action. */
 class ForbiddenException(message: String) : RuntimeException(message)
 
+/** 403 — the user must change their password before calling any endpoint other than change-password. */
+class MustChangePasswordException : RuntimeException("Password change required")
+
 class MissingDeviceIdException : RuntimeException("X-Device-Id is required")
 
 class RateLimitedException(val retryAfterSeconds: Long) : RuntimeException("Too many requests")

@@ -327,6 +327,9 @@ paths:
         Authenticated. Verifies the current password, sets a new one, clears `mustChangePassword`,
         and revokes ALL of the user's sessions (access via token_version bump + all refresh tokens),
         then returns a fresh token pair bound to the current device so the caller stays logged in here.
+        While `mustChangePassword` is set (e.g. after a Founder resets a manager's password), this is the
+        ONLY endpoint the user may call — every other endpoint returns `403 MUST_CHANGE_PASSWORD` until the
+        password is changed; a successful change lifts the restriction immediately.
       operationId: changePassword
       tags:
         - Auth
@@ -371,6 +374,8 @@ paths:
                 $ref: "#/components/schemas/UserProfile"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
         "426":
           $ref: "#/components/responses/UpgradeRequired"
 
@@ -954,11 +959,23 @@ components:
             code: INVALID_TOKEN
             message: Invalid token
     Forbidden:
-      description: Authenticated but not allowed to perform this action (role or branch scope)
+      description: |
+        Authenticated but not allowed to perform this action. Either the role/branch scope forbids it
+        (code `FORBIDDEN`), or the user still has `mustChangePassword` set and must change their password
+        before calling any endpoint other than `POST /api/v1/auth/change-password` (code `MUST_CHANGE_PASSWORD`).
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+          examples:
+            forbidden:
+              value:
+                code: FORBIDDEN
+                message: Access denied
+            mustChangePassword:
+              value:
+                code: MUST_CHANGE_PASSWORD
+                message: Password change required
     UpgradeRequired:
       description: Client app version is no longer supported; upgrade required.
       content:

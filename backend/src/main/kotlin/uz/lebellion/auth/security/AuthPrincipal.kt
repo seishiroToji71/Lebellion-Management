@@ -13,6 +13,8 @@ data class AuthPrincipal(
     /** The caller's branch: set for BRANCH_MANAGER (scopes them to it), null for FOUNDER/EMPLOYEE. */
     val branchId: UUID?,
     val deviceId: String?,
+    /** True while the user must change their password: every endpoint except change-password is blocked. */
+    val mustChangePassword: Boolean = false,
 )
 
 class AuthAuthentication(
