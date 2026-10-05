@@ -56,10 +56,22 @@ Reference product: inspekt.uz (Telegram Mini App). Its known weaknesses that we 
 ## Domain model (v1)
 Organization -> Branch -> Unit (подразделение: Kitchen, Hall, Administrator, Waiters, custom) -> Employee.
 - Every table carries `organization_id`. Every query is scoped by it. Add tests that prove tenant isolation.
-- ChecklistTemplate (per Unit/role) -> ChecklistItem (question, `photo_required`, `points`, `critical`).
-- Schedule: recurring slots (daily times, every-other-day, weekly zones). A scheduler generates `TaskInstance`
-  rows with `due_at`. Timezone is `Asia/Tashkent` (UTC+5, no DST) for schedule logic; store timestamps in UTC.
+- ChecklistTemplate (per Unit/role) -> ChecklistItem. Item types:
+  - `PHOTO` — employee uploads a photo, reviewer accepts/rejects.
+  - `MANUAL` — reviewer scores directly, no photo.
+  - `NUMERIC` — a monthly number; score computed from a configurable scale.
+  Each item carries `photo_required`, `points`, `critical`, `static_scene` (bool) and a per-item duplicate threshold.
+- Schedule: `DAILY` slots (daily times, every-other-day) and `WEEKLY` = once per calendar week
+  (Asia/Tashkent), deadline = end of Sunday, no time of day. A WEEKLY task may have zone sub-items
+  (one photo per zone), progress shown as N of M. A scheduler generates `TaskInstance` rows with `due_at`.
+  Timezone is `Asia/Tashkent` (UTC+5, no DST) for schedule logic; store timestamps in UTC.
+- Tasks belong to a **Unit**, not a person. Any Unit member may submit; the submitter tags helpers
+  ("who did it") and stats credit everyone tagged. The first accepted submission closes a zone.
+- Each Unit has a **lead** and an optional **acting_lead**; fallback is the Branch Manager. A missed
+  task flags the Unit and its lead.
 - TaskInstance -> Submission (answers + photos) -> Review (accepted/rejected, comment).
+- Scoring: the system only RECOMMENDS bonus/penalty, never computes pay. A reviewer with the
+  `can_score` permission may enter MANUAL scores; nobody may score themselves.
 - ExtensionRequest: employee asks BEFORE the deadline (reason, proposed new date); Founder or Branch Manager
   approves/rejects/counters; if nobody answers in N hours it escalates to the Branch Manager.
   Limits (configurable): 1 extension per task, max K per employee per month, not allowed for `critical` items.
@@ -70,14 +82,19 @@ Organization -> Branch -> Unit (подразделение: Kitchen, Hall, Admin
 ## Duplicate / fake photo protection (v1)
 - On upload compute SHA-256 and a perceptual hash (implement dHash 64-bit ourselves, no heavy dependency).
 - Compare with photos of the SAME task in the SAME branch from the previous 60 days.
-  Exact match or Hamming distance <= configurable threshold (start with 6) => reject with HTTP 409 `DUPLICATE_PHOTO`.
+  The dHash Hamming threshold is configurable **per checklist item** (start with 6). An exact SHA-256 match is
+  ALWAYS rejected with HTTP 409 `DUPLICATE_PHOTO`. For items marked "static scene", a near-duplicate (within the
+  threshold) is FLAGGED for reviewer attention instead of being rejected. For items that are NOT marked static scene, a near-duplicate within the threshold is rejected with HTTP 409 `DUPLICATE_PHOTO`. 
 - Record every blocked attempt (employee, task, time). The attempt count is itself a signal shown to the Founder.
 - Limitation to remember: a re-photo of a screen or a new angle of the old scene passes; that is why the Founder review exists.
 - Server time is authoritative. The client burns a watermark (branch, task, time, employee) into the image; never trust EXIF.
 
 ## Legal / data rules
-- Personal data of Uzbek citizens (names, phones, photos) must be stored on servers physically in Uzbekistan and the
-  database must be registered. Never send personal data to foreign services. No AWS/GCP for production data.
+- Law **ZRU-1125 (26 Mar 2026)** relaxed data localization: mandatory in-country storage now applies only to
+  listed categories (biometrics, genetic data, telecom subscriber data). **Default anyway:** host production
+  data on a VPS physically in Uzbekistan; never send personal data to foreign services; no AWS/GCP for
+  production data. **Do NOT collect passport/ID numbers.** Confirm photo/face handling and database
+  registration with a lawyer before launch.
 - No personal data in logs. No secrets in git (use env vars / `.env` ignored by git; commit `.env.example` only).
 
 ## Working rules for Claude Code
