@@ -1232,6 +1232,82 @@ paths:
         "426":
           $ref: "#/components/responses/UpgradeRequired"
 
+  /api/v1/units/{unitId}/lead:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: unitId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: Get a unit's lead assignment and resolved effective lead
+      description: |
+        Returns the assigned lead/acting_lead and the resolved effective lead
+        (acting_lead -> lead -> branch manager). FOUNDER any unit; BRANCH_MANAGER only their branch.
+      operationId: getUnitLead
+      tags:
+        - Organization
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The unit's lead assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnitLead"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unit not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+    put:
+      summary: Set a unit's lead / acting_lead (FOUNDER or BRANCH_MANAGER)
+      description: |
+        Full replacement: each field is the desired state, null clears it. A referenced user must be
+        active and either a member of the unit or the manager of its branch (otherwise `400`).
+      operationId: setUnitLead
+      tags:
+        - Organization
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetUnitLeadRequest"
+      responses:
+        "200":
+          description: The updated lead assignment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UnitLead"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unit not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2261,6 +2337,44 @@ components:
           type: boolean
         status:
           $ref: "#/components/schemas/TaskStatus"
+
+    LeadSource:
+      type: string
+      enum: [ACTING_LEAD, LEAD, BRANCH_MANAGER, NONE]
+      description: Where the effective lead came from; NONE = no lead and no branch manager.
+
+    SetUnitLeadRequest:
+      type: object
+      description: Full replacement — null clears that role.
+      properties:
+        leadEmployeeId:
+          type: [string, "null"]
+          format: uuid
+        actingLeadEmployeeId:
+          type: [string, "null"]
+          format: uuid
+
+    UnitLead:
+      type: object
+      required:
+        - unitId
+        - source
+      properties:
+        unitId:
+          type: string
+          format: uuid
+        leadEmployeeId:
+          type: [string, "null"]
+          format: uuid
+        actingLeadEmployeeId:
+          type: [string, "null"]
+          format: uuid
+        effectiveLeadUserId:
+          type: [string, "null"]
+          format: uuid
+          description: Resolved acting_lead -> lead -> branch manager; null only when source is NONE.
+        source:
+          $ref: "#/components/schemas/LeadSource"
 
     Error:
       type: object

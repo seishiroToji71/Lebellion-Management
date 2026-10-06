@@ -21,4 +21,12 @@ class OrgUnit(
 
     @Column(name = "name", nullable = false, length = 255)
     var name: String,
+
+    /** Unit lead (e.g. the kitchen's chef); null => fall back to the branch manager. */
+    @Column(name = "lead_employee_id")
+    var leadEmployeeId: UUID? = null,
+
+    /** Temporary stand-in; takes precedence over [leadEmployeeId] while set. */
+    @Column(name = "acting_lead_employee_id")
+    var actingLeadEmployeeId: UUID? = null,
 ) : BaseEntity()

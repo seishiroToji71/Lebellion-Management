@@ -27,6 +27,13 @@ interface AppUserRepository : JpaRepository<AppUser, UUID> {
     fun existsByEmailIgnoreCase(email: String): Boolean
     fun existsByPhone(phone: String): Boolean
 
+    /** First active BRANCH_MANAGER of a branch — the fallback unit lead when none is assigned. */
+    fun findFirstByOrganizationIdAndBranchIdAndRoleAndIsActiveTrueOrderByCreatedAtAsc(
+        organizationId: UUID,
+        branchId: UUID,
+        role: Role,
+    ): AppUser?
+
     /** Locks the user row so deactivate / recovery-invite serialize against concurrent writes. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select u from AppUser u where u.id = :id and u.organizationId = :orgId")
