@@ -37,6 +37,7 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.temporal.TemporalAdjusters
+import java.time.temporal.WeekFields
 import java.util.UUID
 
 /**
@@ -176,6 +177,40 @@ class ScheduleGeneratorIT {
         assertEquals(currentWeekDue, insts.minOf { it.dueAt }, "soonest due = end of current Sunday")
         assertTrue(insts.all { it.slotTime == null && it.scheduledAt == null }, "weekly zones have no slot")
         assertTrue(insts.size % 2 == 0, "two zones per generated week")
+    }
+
+    @Test
+    fun `weekly generation spans the ISO year boundary (W53 2026) without gaps or duplicates`() {
+        val org = orgId()
+        val template = templateId(org, unitId(org))
+        addItem(org, template, "deep-clean")
+        val schedule = weekly(org, template)
+
+        clock.setTo(instant(2026, 12, 30, 12, 0)) // Wednesday of ISO week 53 / 2026 (a long ISO year)
+        generator.generate()
+
+        val insts = taskInstances.findByScheduleId(schedule)
+        val keys = insts.map { it.periodKey }
+
+        // expected: exactly one instance per ISO week from the current week's Monday through the horizon
+        val now = LocalDate.of(2026, 12, 30)
+        val end = now.plusDays(14)
+        val expectedKeys = generateSequence(now.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))) { it.plusDays(7) }
+            .takeWhile { !it.isAfter(end) }
+            .map { "W:%04d-W%02d".format(it.get(WeekFields.ISO.weekBasedYear()), it.get(WeekFields.ISO.weekOfWeekBasedYear())) }
+            .toList()
+
+        assertTrue(expectedKeys.contains("W:2026-W53"), "2026 is a long ISO year and must have a week 53")
+        assertTrue(expectedKeys.contains("W:2027-W01"), "the next week rolls into ISO year 2027")
+        assertEquals(expectedKeys.toSet(), keys.toSet(), "every ISO week in range is covered — no gaps across the boundary")
+        assertEquals(keys.size, keys.toSet().size, "no duplicate period_key across the year boundary")
+
+        // W53's deadline is the end of Sunday 2027-01-03 = 2027-01-04 00:00 local (Asia/Tashkent)
+        val w53 = insts.first { it.periodKey == "W:2026-W53" }
+        assertEquals(LocalDate.of(2027, 1, 4).atStartOfDay(TZ).toInstant(), w53.dueAt)
+
+        generator.generate()
+        assertEquals(insts.size, taskInstances.findByScheduleId(schedule).size, "idempotent across the boundary")
     }
 
     @Test
