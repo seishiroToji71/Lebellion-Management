@@ -7,6 +7,7 @@ import uz.lebellion.auth.web.RequestValidationException
 import uz.lebellion.checklist.service.ensureUnitInScope
 import uz.lebellion.org.repo.UnitRepository
 import uz.lebellion.org.service.requireFounderOrManager
+import uz.lebellion.schedule.domain.TaskStatus
 import uz.lebellion.schedule.repo.TaskInstanceRepository
 import uz.lebellion.schedule.web.TaskInstanceResponse
 import uz.lebellion.schedule.web.toResponse
@@ -34,8 +35,8 @@ class TaskInstanceService(
         val t = to ?: f.plus(Duration.ofDays(7))
         if (!t.isAfter(f)) throw RequestValidationException("'to' must be after 'from'")
         return taskInstances
-            .findByOrganizationIdAndUnitIdAndDueAtGreaterThanEqualAndDueAtLessThanOrderByDueAtAscIdAsc(
-                principal.organizationId, unitId, f, t,
+            .findByOrganizationIdAndUnitIdAndStatusNotAndDueAtGreaterThanEqualAndDueAtLessThanOrderByDueAtAscIdAsc(
+                principal.organizationId, unitId, TaskStatus.CANCELLED, f, t,
             )
             .map { it.toResponse() }
     }

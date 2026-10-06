@@ -60,6 +60,7 @@ lebellion:
       # Recovery-invite also mints a secret (and, for a manager, a temporary password) — same cap.
       recovery-invite:             { limit: 20, window: PT1M }
   schedule:
-    # How far ahead the generator materialises task instances, and the master on/off switch for the job.
+    # How far ahead the generator materialises task instances, and the master on/off switches for the jobs.
     horizon-days: 14
     generation-enabled: true
+    missed-sweep-enabled: true

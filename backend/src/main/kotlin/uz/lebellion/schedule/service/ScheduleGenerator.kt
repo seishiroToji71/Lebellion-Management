@@ -53,6 +53,10 @@ class ScheduleGenerator(
         return schedules.findByActiveTrue().sumOf { generateFor(it, now) }
     }
 
+    /** Generate for a single schedule (used after an edit regenerates its cancelled-forward window). */
+    @Transactional
+    fun generate(schedule: Schedule): Int = generateFor(schedule, Instant.now(clock))
+
     private fun generateFor(schedule: Schedule, now: Instant): Int {
         val lines = items.findByOrganizationIdAndTemplateIdOrderBySortOrderAscIdAsc(schedule.organizationId, schedule.templateId)
         if (lines.isEmpty()) return 0
@@ -116,7 +120,8 @@ class ScheduleGenerator(
         dueAt: Instant,
         photoRequired: Boolean,
     ): Boolean {
-        if (taskInstances.existsByScheduleIdAndItemIdAndPeriodKey(schedule.id!!, line.id!!, periodKey)) return false
+        // ignore CANCELLED rows so a cancelled-forward occurrence is regenerated as a fresh PENDING
+        if (taskInstances.existsByScheduleIdAndItemIdAndPeriodKeyAndStatusNot(schedule.id!!, line.id!!, periodKey, TaskStatus.CANCELLED)) return false
         taskInstances.save(
             TaskInstance(
                 organizationId = schedule.organizationId,

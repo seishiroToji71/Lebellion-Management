@@ -42,6 +42,13 @@ class UnitLeadService(
         return response(resolveUnitInScope(principal, unitId))
     }
 
+    /** System-side resolution (no principal) — used e.g. by the MISSED sweeper to flag a unit's lead. */
+    @Transactional(readOnly = true)
+    fun effectiveLeadUserId(organizationId: UUID, unitId: UUID): UUID? {
+        val unit = units.findByIdAndOrganizationId(unitId, organizationId) ?: return null
+        return resolveEffective(unit).first
+    }
+
     private fun resolveUnitInScope(principal: AuthPrincipal, unitId: UUID): OrgUnit {
         val unit = units.findByIdAndOrganizationId(unitId, principal.organizationId)
             ?: throw NotFoundException("unit not found")

@@ -4,7 +4,6 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import uz.lebellion.auth.security.AuthPrincipal
 import uz.lebellion.auth.web.NotFoundException
-import uz.lebellion.auth.web.RequestValidationException
 import uz.lebellion.checklist.repo.ChecklistTemplateRepository
 import uz.lebellion.checklist.service.ensureUnitInScope
 import uz.lebellion.org.repo.UnitRepository
@@ -34,7 +33,7 @@ class ScheduleService(
         val template = templates.findByIdAndOrganizationId(templateId, principal.organizationId)
             ?: throw NotFoundException("template not found")
         ensureUnitInScope(units, principal, template.unitId)
-        validate(req)
+        validateScheduleShape(req.recurrence, req.anchorDate, req.slots.size, req.slotWindowMinutes, req.intervalDays)
 
         val weekly = req.recurrence == Recurrence.WEEKLY
         val schedule = schedules.save(
@@ -83,15 +82,6 @@ class ScheduleService(
             val scheduleSlots = (slotsBySchedule[schedule.id!!] ?: emptyList())
                 .sortedWith(compareBy({ it.sortOrder }, { it.slotTime }))
             schedule.toResponse(template.unitId, scheduleSlots)
-        }
-    }
-
-    private fun validate(req: CreateScheduleRequest) {
-        if (req.slotWindowMinutes < 1) throw RequestValidationException("slotWindowMinutes must be >= 1")
-        if (req.intervalDays < 1) throw RequestValidationException("intervalDays must be >= 1")
-        if (req.recurrence == Recurrence.DAILY) {
-            if (req.anchorDate == null) throw RequestValidationException("anchorDate is required for a DAILY schedule")
-            if (req.slots.isEmpty()) throw RequestValidationException("a DAILY schedule needs at least one slot")
         }
     }
 }

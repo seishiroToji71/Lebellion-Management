@@ -8,10 +8,20 @@ import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.MissingRequestHeaderException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import uz.lebellion.schedule.web.TaskCancelledException
+import uz.lebellion.schedule.web.TaskNotOpenException
 
 /** Maps domain + framework exceptions to the shared `Error` body with stable codes. */
 @RestControllerAdvice
 class GlobalExceptionHandler {
+
+    @ExceptionHandler(TaskCancelledException::class)
+    fun taskCancelled(e: TaskCancelledException) =
+        error(HttpStatus.CONFLICT, "TASK_CANCELLED", "This task was cancelled")
+
+    @ExceptionHandler(TaskNotOpenException::class)
+    fun taskNotOpen(e: TaskNotOpenException) =
+        error(HttpStatus.CONFLICT, "TASK_NOT_OPEN", "Task is not open for submission")
 
     @ExceptionHandler(InvalidCredentialsException::class)
     fun invalidCredentials(e: InvalidCredentialsException) =

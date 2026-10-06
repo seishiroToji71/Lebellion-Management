@@ -1308,6 +1308,138 @@ paths:
         "426":
           $ref: "#/components/responses/UpgradeRequired"
 
+  /api/v1/schedules/{scheduleId}:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      summary: Edit a schedule (FOUNDER or BRANCH_MANAGER)
+      description: |
+        `recurrence` is immutable. Applying an edit cancels this schedule's future PENDING instances
+        (status CANCELLED, not deleted) and — if still active — regenerates them from the new definition.
+      operationId: updateSchedule
+      tags:
+        - Schedules
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateScheduleRequest"
+      responses:
+        "200":
+          description: The updated schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Schedule not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/schedules/{scheduleId}/deactivate:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Deactivate a schedule (FOUNDER or BRANCH_MANAGER)
+      description: Stops future generation and cancels this schedule's future PENDING instances (CANCELLED).
+      operationId: deactivateSchedule
+      tags:
+        - Schedules
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The deactivated schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Schedule"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Schedule not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/task-instances/{taskInstanceId}/submit:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: taskInstanceId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Submit a task instance
+      description: |
+        Marks a PENDING task SUBMITTED. (P2-4: status transition only; photos, duplicate-photo
+        protection and helper tags arrive in P2-5.) FOUNDER any unit; BRANCH_MANAGER own branch;
+        EMPLOYEE own unit. A CANCELLED task yields `409 TASK_CANCELLED` (the attempt is recorded, not a
+        404 — an offline client's late upload gets a clear error); any other non-PENDING status yields
+        `409 TASK_NOT_OPEN`.
+      operationId: submitTaskInstance
+      tags:
+        - Schedules
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The task instance, now SUBMITTED
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskInstance"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Task not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`TASK_CANCELLED` (task was cancelled) or `TASK_NOT_OPEN` (already MISSED/SUBMITTED/DONE/...)"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2187,8 +2319,10 @@ components:
 
     TaskStatus:
       type: string
-      enum: [PENDING, SUBMITTED, REJECTED, EXTENSION_REQUESTED, DONE, MISSED, EXTENDED]
-      description: User-visible are DONE / MISSED / EXTENDED; the rest are internal.
+      enum: [PENDING, SUBMITTED, REJECTED, EXTENSION_REQUESTED, DONE, MISSED, EXTENDED, CANCELLED]
+      description: |
+        User-visible are DONE / MISSED / EXTENDED; the rest are internal. CANCELLED = the schedule was
+        edited/deactivated; a kept (not deleted) occurrence so a late submission gets a clear error.
 
     SlotRequest:
       type: object
@@ -2205,6 +2339,31 @@ components:
         sortOrder:
           type: integer
           default: 0
+
+    UpdateScheduleRequest:
+      type: object
+      description: |
+        Edit a schedule. `recurrence` is immutable (kept); everything else is the new desired state.
+        Cancels future PENDING and — if still active — regenerates them.
+      properties:
+        intervalDays:
+          type: integer
+          minimum: 1
+          default: 1
+        anchorDate:
+          type: [string, "null"]
+          format: date
+        slotWindowMinutes:
+          type: integer
+          minimum: 1
+          default: 60
+        active:
+          type: boolean
+          default: true
+        slots:
+          type: array
+          items:
+            $ref: "#/components/schemas/SlotRequest"
 
     CreateScheduleRequest:
       type: object

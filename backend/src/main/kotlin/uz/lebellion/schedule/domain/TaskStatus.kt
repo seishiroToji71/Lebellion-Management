@@ -1,8 +1,9 @@
 package uz.lebellion.schedule.domain
 
 /**
- * Lifecycle of a task instance. The generator (P2-3) only creates [PENDING]; the transitions and the
- * MISSED sweeper arrive in P2-4. Visible to users: DONE / MISSED / EXTENDED; the rest are internal.
+ * Lifecycle of a task instance. The generator creates [PENDING]; the sweeper marks overdue ones [MISSED];
+ * editing/deactivating a schedule moves future PENDING to [CANCELLED] (kept, not deleted, so a late
+ * client submission gets a clear error). Visible to users: DONE / MISSED / EXTENDED; the rest are internal.
  */
 enum class TaskStatus {
     PENDING,
@@ -12,4 +13,5 @@ enum class TaskStatus {
     DONE,
     MISSED,
     EXTENDED,
+    CANCELLED,
 }
