@@ -421,8 +421,34 @@ static-scene флаг. В CLAUDE.md упомянут «every-other-day» — з�
 - `period_key`: DAILY `"D:<date>:<HH:mm>"`, WEEKLY `"W:<isoYear>-W<week>"`.
 - Эндпойнты: `POST/GET /templates/{templateId}/schedules` (FOUNDER любой/MANAGER свой филиал),
   `GET /units/{unitId}/task-instances?from&to` (FOUNDER+MANAGER; employee-фид — позже, в mobile-слайсе).
-- Тесты: `ScheduleGeneratorIT` (4: every-other-day через стык месяцев, слот 23:00 за полночь, конец вс,
-  идемпотентность) + `ScheduleManagementIT` (5: скоупинг, DAILY/WEEKLY, валидация, фид после генерации).
+- Тесты: `ScheduleGeneratorIT` (5: every-other-day через стык месяцев, слот 23:00 за полночь, конец вс,
+  **стык ISO-года W53 2026 → W01 2027 без дублей/пропусков**, идемпотентность) + `ScheduleManagementIT`
+  (5: скоупинг, DAILY/WEEKLY, валидация, фид после генерации).
+
+### Открытый вопрос — изменение/деактивация schedule (предложено, ждёт подтверждения)
+
+Сейчас edit/deactivate-эндпойнтов нет; генератор только INSERT'ит недостающие occurrence'ы и никогда не
+трогает существующие. Значит при будущем edit/deactivate без доп-логики: деактивация НЕ остановит уже
+сгенерированные будущие `PENDING` (они останутся в фиде и уйдут в MISSED в P2-4), а edit оставит «призраков»
+со старыми `period_key`/`due_at`.
+**Предложено (рекомендация): «перегенерировать вперёд»** — при edit и deactivate удалять только
+`status = PENDING AND due_at > now` данного schedule (на edit — дать генератору воссоздать из нового
+определения). Непустые статусы (`SUBMITTED/REJECTED/.../DONE/MISSED/EXTENDED`) и прошлое — не трогать.
+Hard-delete будущих PENDING (работа не велась); `CANCELLED`-статус — только если понадобится аудит.
+**Реализовать вместе с edit/deactivate-эндпойнтами в P2-4** (там же живут «будущее PENDING» и sweeper).
+Альтернатива «оставить всё» — отклонена (призраки/дубли, деактивация не останавливает задачи).
+
+### P2-2 — реализовано (accepted, миграция V7; только Unit-level)
+
+- `unit.lead_employee_id` / `unit.acting_lead_employee_id` (nullable, FK `app_user`). Эндпойнты
+  `GET/PUT /units/{unitId}/lead` (FOUNDER любой юнит, BRANCH_MANAGER свой филиал; employee — 403).
+- **Эффективный lead = acting_lead → lead → BRANCH_MANAGER филиала → NONE** (fallback резолвится,
+  не хранится). Деактивированный назначенный lead «проваливается» к следующему уровню (назначение
+  сохраняется, но не резолвится). Источник отдаётся как `LeadSource`.
+- **PUT = полная замена** (null очищает). Назначаемый пользователь должен быть активен и либо член юнита
+  (`unit_id == unitId`), либо менеджер его филиала — иначе `400` (покрывает «кухня = шеф», «зал = менеджер»).
+- Позиции под Unit по-прежнему ждут владельца (`position_id` reserved). Флагование lead при пропуске — P2-4.
+- Тесты: `UnitLeadIT` (4: прецеденс+очистка, fallback+деактивация, скоупинг/tenant, валидация назначения).
 
 ## Data / legal — обновление (ZRU-1125, 26 Mar 2026)
 
