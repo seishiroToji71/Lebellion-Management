@@ -878,6 +878,227 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  /api/v1/criteria:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+    get:
+      summary: List the reusable criterion library (paginated)
+      description: |
+        The org-wide library of reusable criteria. FOUNDER and BRANCH_MANAGER may read it (to compose
+        templates); EMPLOYEE is not permitted (`403 FORBIDDEN`).
+      operationId: listCriteria
+      tags:
+        - Checklists
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of criteria
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CriterionPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+    post:
+      summary: Create a library criterion (FOUNDER only)
+      operationId: createCriterion
+      tags:
+        - Checklists
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCriterionRequest"
+      responses:
+        "201":
+          description: Criterion created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Criterion"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/units/{unitId}/templates:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: unitId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: List a unit's checklist templates (paginated)
+      description: |
+        FOUNDER may read any unit's templates; a BRANCH_MANAGER only units of their own branch
+        (a unit outside scope is `404 NOT_FOUND`). EMPLOYEE is not permitted (`403 FORBIDDEN`).
+      operationId: listChecklistTemplates
+      tags:
+        - Checklists
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Cursor"
+      responses:
+        "200":
+          description: A page of templates
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChecklistTemplatePage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unit not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+    post:
+      summary: Create a checklist template under a unit (FOUNDER or BRANCH_MANAGER)
+      description: |
+        A unit may own several templates (one per position, e.g. «Повар мангалщик»). FOUNDER may target
+        any unit of the org; a BRANCH_MANAGER only units of their own branch.
+      operationId: createChecklistTemplate
+      tags:
+        - Checklists
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChecklistTemplateRequest"
+      responses:
+        "201":
+          description: Template created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChecklistTemplate"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Unit not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/templates/{templateId}/items:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: templateId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: List a template's items (ordered, not paginated)
+      description: |
+        A template's items form a single bounded checklist, returned whole and ordered by `sortOrder`.
+        For a linked item (`criterionId` set) the title/standard text is resolved from the library.
+      operationId: listChecklistItems
+      tags:
+        - Checklists
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The template's items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ChecklistItem"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Template not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+    post:
+      summary: Add an item to a template (FOUNDER or BRANCH_MANAGER)
+      description: |
+        Provide `criterionId` to LINK a library criterion: its `type` and title/standard text are
+        inherited (not duplicated on the item) and the scalar config fields, when present, override the
+        criterion's defaults. Omit `criterionId` for an AD-HOC item, where `type`, `titleRu` and
+        `titleUz` are required.
+      operationId: createChecklistItem
+      tags:
+        - Checklists
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateChecklistItemRequest"
+      responses:
+        "201":
+          description: Item created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChecklistItem"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Template or linked criterion not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1482,6 +1703,274 @@ components:
             $ref: "#/components/schemas/InviteSummary"
         nextCursor:
           type: [string, "null"]
+
+    ItemType:
+      type: string
+      enum: [PHOTO, MANUAL, NUMERIC]
+      description: |
+        PHOTO — employee uploads a photo, reviewer accepts/rejects.
+        MANUAL — reviewer scores directly, no photo.
+        NUMERIC — a monthly number scored from a configurable scale (scale arrives with scoring in P2-6).
+
+    CreateCriterionRequest:
+      type: object
+      required:
+        - type
+        - titleRu
+        - titleUz
+      properties:
+        type:
+          $ref: "#/components/schemas/ItemType"
+        titleRu:
+          type: string
+          minLength: 1
+          maxLength: 120
+        titleUz:
+          type: string
+          minLength: 1
+          maxLength: 120
+        standardRu:
+          type: [string, "null"]
+          maxLength: 500
+        standardUz:
+          type: [string, "null"]
+          maxLength: 500
+        originalText:
+          type: [string, "null"]
+          maxLength: 4000
+        photoRequired:
+          type: boolean
+          default: false
+        points:
+          type: integer
+          minimum: 0
+          default: 0
+        critical:
+          type: boolean
+          default: false
+        staticScene:
+          type: boolean
+          default: false
+        dhashThreshold:
+          type: integer
+          minimum: 0
+          maximum: 64
+          default: 6
+
+    Criterion:
+      type: object
+      required:
+        - id
+        - organizationId
+        - type
+        - titleRu
+        - titleUz
+        - photoRequired
+        - points
+        - critical
+        - staticScene
+        - dhashThreshold
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        type:
+          $ref: "#/components/schemas/ItemType"
+        titleRu:
+          type: string
+        titleUz:
+          type: string
+        standardRu:
+          type: [string, "null"]
+        standardUz:
+          type: [string, "null"]
+        originalText:
+          type: [string, "null"]
+        photoRequired:
+          type: boolean
+          description: Default photo_required seeded onto a linked item.
+        points:
+          type: integer
+          description: Default points seeded onto a linked item.
+        critical:
+          type: boolean
+        staticScene:
+          type: boolean
+        dhashThreshold:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    CriterionPage:
+      type: object
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Criterion"
+        nextCursor:
+          type: [string, "null"]
+
+    CreateChecklistTemplateRequest:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+
+    ChecklistTemplate:
+      type: object
+      required:
+        - id
+        - organizationId
+        - unitId
+        - name
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        unitId:
+          type: string
+          format: uuid
+        positionId:
+          type: [string, "null"]
+          format: uuid
+          description: Reserved for the future positions model (P2-2); null until positions are defined.
+        name:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    ChecklistTemplatePage:
+      type: object
+      required:
+        - items
+        - nextCursor
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChecklistTemplate"
+        nextCursor:
+          type: [string, "null"]
+
+    CreateChecklistItemRequest:
+      type: object
+      description: |
+        LINK a criterion with `criterionId` (then `type`/text are inherited and the scalar fields override
+        the criterion's defaults), or omit it for an AD-HOC item (then `type`, `titleRu`, `titleUz` are
+        required). The scalar fields are nullable so "not provided" (inherit/default) differs from a value.
+      properties:
+        criterionId:
+          type: [string, "null"]
+          format: uuid
+        type:
+          oneOf:
+            - $ref: "#/components/schemas/ItemType"
+            - type: "null"
+        titleRu:
+          type: [string, "null"]
+          maxLength: 120
+        titleUz:
+          type: [string, "null"]
+          maxLength: 120
+        standardRu:
+          type: [string, "null"]
+          maxLength: 500
+        standardUz:
+          type: [string, "null"]
+          maxLength: 500
+        originalText:
+          type: [string, "null"]
+          maxLength: 4000
+        photoRequired:
+          type: [boolean, "null"]
+        points:
+          type: [integer, "null"]
+          minimum: 0
+        critical:
+          type: [boolean, "null"]
+        staticScene:
+          type: [boolean, "null"]
+        dhashThreshold:
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 64
+        sortOrder:
+          type: integer
+          default: 0
+
+    ChecklistItem:
+      type: object
+      required:
+        - id
+        - organizationId
+        - templateId
+        - type
+        - photoRequired
+        - points
+        - critical
+        - staticScene
+        - dhashThreshold
+        - sortOrder
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        organizationId:
+          type: string
+          format: uuid
+        templateId:
+          type: string
+          format: uuid
+        criterionId:
+          type: [string, "null"]
+          format: uuid
+          description: When set, the item links a library criterion and the title/standard text below is resolved from it.
+        type:
+          $ref: "#/components/schemas/ItemType"
+        titleRu:
+          type: [string, "null"]
+        titleUz:
+          type: [string, "null"]
+        standardRu:
+          type: [string, "null"]
+        standardUz:
+          type: [string, "null"]
+        originalText:
+          type: [string, "null"]
+        photoRequired:
+          type: boolean
+        points:
+          type: integer
+        critical:
+          type: boolean
+        staticScene:
+          type: boolean
+        dhashThreshold:
+          type: integer
+        sortOrder:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
 
     Error:
       type: object
