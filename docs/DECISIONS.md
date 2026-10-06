@@ -450,6 +450,29 @@ Hard-delete будущих PENDING (работа не велась); `CANCELLED`
 - Позиции под Unit по-прежнему ждут владельца (`position_id` reserved). Флагование lead при пропуске — P2-4.
 - Тесты: `UnitLeadIT` (4: прецеденс+очистка, fallback+деактивация, скоупинг/tenant, валидация назначения).
 
+### P2-4 — реализовано (accepted, миграция V8)
+
+Открытый вопрос выше **закрыт: regenerate-forward через CANCELLED** (не hard-delete).
+
+- **Статус `CANCELLED`** + **частичный unique** `task_instance_unique (schedule_id, item_id, period_key)
+  WHERE status <> 'CANCELLED'` (V8). Генератор игнорирует CANCELLED в проверке существования, поэтому та же
+  occurrence пересоздаётся новым PENDING рядом с отменённой строкой.
+- **Edit/Deactivate schedule** (`PUT /schedules/{id}`, `POST /schedules/{id}/deactivate`): будущие PENDING
+  (`due_at > now`) → CANCELLED; при edit (если active) — регенерация из нового определения. Прошлое и
+  непустые статусы не трогаем. Причина CANCELLED, а не delete: офлайн-клиент может прислать фото к отменённой
+  задаче — нужна понятная ошибка и сохранённая попытка, не 404. Правка слотов — bulk-delete перед вставкой
+  (иначе Hibernate упорядочивает insert перед delete и ловит `schedule_slot_unique`).
+- **MISSED-sweeper** (`@Scheduled` каждые 5 мин, выключатель `missed-sweep-enabled`): PENDING с `due_at <= now`
+  → MISSED (время сервера — истина), флагует Unit + эффективного lead строкой в `notification_outbox`.
+- **`notification_outbox`** (V8): таблица + `NotificationOutboxWriter` (JdbcTemplate + CAST, как AuditLog),
+  **без диспетчера**. События: `TASK_MISSED`, `TASK_SUBMITTED`.
+- **Минимальный submit** (`POST /task-instances/{id}/submit`): PENDING → SUBMITTED (фото/дубликаты/теги —
+  в P2-5). CANCELLED → `409 TASK_CANCELLED` + попытка пишется в `audit_log` в отдельной транзакции
+  (`REQUIRES_NEW`), чтобы пережить rollback reject'а; прочие非-PENDING → `409 TASK_NOT_OPEN`. Скоуп:
+  FOUNDER / BRANCH_MANAGER(свой филиал) / EMPLOYEE(свой unit), вне scope → 404. Фид скрывает CANCELLED.
+- Тесты: `ScheduleAdminIT` (3: edit cancel+regen с переиспользованием period_key, deactivate, скоуп),
+  `TaskLifecycleIT` (4: submit PENDING, submit→CANCELLED `409`+аудит, sweeper MISSED+outbox+lead и submit→MISSED `409`, скоуп/tenant).
+
 ## Data / legal — обновление (ZRU-1125, 26 Mar 2026)
 
 - Закон **ZRU-1125 (26.03.2026)** ослабил локализацию: обязательное хранение в стране теперь только для
