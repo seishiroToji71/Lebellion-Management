@@ -406,6 +406,24 @@ static-scene флаг. В CLAUDE.md упомянут «every-other-day» — з�
 - Право **`can_review`** (boolean у сотрудника; FOUNDER имеет всегда), отдельно от `can_score`. Lead
   подразделения делает ревью первой линии — «как подпись на бумаге».
 
+### P2-3 — реализовано (accepted, миграция V6)
+
+- Таблицы `schedule`, `schedule_slot`, `task_instance` (V6). Расписание привязано к одному шаблону.
+- **Гранулярность `task_instance` = (schedule, item, occurrence).** Зоны WEEKLY = `checklist_item`'ы
+  недельного шаблона; прогресс «N из M» = число DONE среди item-инстансов недели. Отдельной таблицы зон нет.
+- **Генератор** (`ScheduleGenerator`): горизонт `lebellion.schedule.horizon-days` (default 14);
+  идемпотентность через unique `(schedule_id, item_id, period_key)`; только вперёд (`due_at >= now`);
+  «now» из инжектируемого `Clock` (тесты тайм-трэвелят `MutableClock`). Джоб `@Scheduled` ежедневно 00:05
+  `Asia/Tashkent`, выключатель `generation-enabled`.
+- **due_at (UTC):** DAILY = локальное время слота + окно; WEEKLY = след. понедельник 00:00 локально
+  (= конец воскресенья). `scheduled_at`/`slot_time` — только у DAILY. `photo_required` на инстансе —
+  эффективное (override слота ?? item). Пока создаётся только `PENDING` (полный набор статусов уже в CHECK → P2-4).
+- `period_key`: DAILY `"D:<date>:<HH:mm>"`, WEEKLY `"W:<isoYear>-W<week>"`.
+- Эндпойнты: `POST/GET /templates/{templateId}/schedules` (FOUNDER любой/MANAGER свой филиал),
+  `GET /units/{unitId}/task-instances?from&to` (FOUNDER+MANAGER; employee-фид — позже, в mobile-слайсе).
+- Тесты: `ScheduleGeneratorIT` (4: every-other-day через стык месяцев, слот 23:00 за полночь, конец вс,
+  идемпотентность) + `ScheduleManagementIT` (5: скоупинг, DAILY/WEEKLY, валидация, фид после генерации).
+
 ## Data / legal — обновление (ZRU-1125, 26 Mar 2026)
 
 - Закон **ZRU-1125 (26.03.2026)** ослабил локализацию: обязательное хранение в стране теперь только для
