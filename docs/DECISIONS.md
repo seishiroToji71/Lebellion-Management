@@ -358,6 +358,23 @@ static-scene флаг. В CLAUDE.md упомянут «every-other-day» — з�
 **P2-5 — теги помощников:** `submission_helper(submission_id, employee_id, confirmed_at nullable)` —
 статистика кредитует всех тегнутых, `confirmed_at` фиксирует подтверждение участия.
 
+### P2-1 — реализовано (accepted, миграция V5)
+
+- Таблицы `criterion_library`, `checklist_template`, `checklist_item` (V5). Эндпойнты: `criteria`
+  (list — FOUNDER+MANAGER, create — FOUNDER), `units/{unitId}/templates` (list/create — FOUNDER любой юнит,
+  MANAGER только свой филиал), `templates/{templateId}/items` (list/create).
+- **«Нет дублей текста» на уровне БД:** CHECK `item_text_source_chk` — у linked-item `title_ru/title_uz = NULL`
+  (текст читается из библиотеки), у ad-hoc — заполнены. Скалярный конфиг (points/critical/static_scene/
+  dhash_threshold/photo_required) материализуется на item и переопределяем; linked-item сеет дефолты из критерия.
+- **Список items не пагинируется** — отдаётся целиком, упорядочен по `(sort_order, id)` (checklist ограничен).
+- **Отложено из P2-1:** `numeric_scale` (JSONB) + шкала-полосы → в P2-6 (там же тест «0 → лучшая полоса»);
+  правило «static_scene=true для пунктов недельных задач с зонами» → в P2-3 (зоны появляются там). Причина
+  отсрочки JSONB: в проекте JSONB пишется через JdbcTemplate+CAST (см. `AuditLogRecorder`), Hibernate JSON-маппер
+  сознательно не используется — чтобы `checklist_item` оставался чистой JPA-сущностью, scale вводим вместе со скорингом.
+- `position_id` на `checklist_template` — nullable, без FK (ждёт модель позиций, P2-2).
+- Тесты: `ChecklistManagementIT` (8), Testcontainers — роль-скоупинг, бранч-конфайнмент, tenant-isolation,
+  linked/ad-hoc + резолв текста, порядок, валидация, пагинация.
+
 ## Data / legal — обновление (ZRU-1125, 26 Mar 2026)
 
 - Закон **ZRU-1125 (26.03.2026)** ослабил локализацию: обязательное хранение в стране теперь только для
