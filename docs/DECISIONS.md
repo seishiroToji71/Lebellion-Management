@@ -495,6 +495,35 @@ Hard-delete будущих PENDING (работа не велась); `CANCELLED`
 не `static_scene` near-dup → `409`. Порог Hamming — per-item (`dhash_threshold`, default 6). Область
 сравнения — `(item, unit)` за 60 дней (не per task_instance).
 
+### P2-5 — реализовано (accepted, миграция V9)
+
+- Таблицы `submission`, `photo`, `submission_helper`, `blocked_attempt` (V9). Новый модуль `submission`.
+  Минимальный submit из P2-4 **заменён** полноценным multipart `POST /task-instances/{id}/submit`
+  (`answer`, optional `photo`, repeated `helperUserIds`). Старые `TaskSubmissionService/Controller` удалены.
+- **Загрузка:** формат по magic bytes (`detectImageContentType`, JPEG/PNG; Content-Type клиента игнорируем),
+  лимит `max-photo-bytes` (default 10 МБ) → `413 PHOTO_TOO_LARGE`, не-изображение → `415 UNSUPPORTED_IMAGE`.
+  `StorageService` + `LocalDiskStorageService` (ключ — 64-hex из `SecureRandom`, fan-out `ab/cd/<key>`).
+  Signed URL: `GET /media/{key}?exp&sig` (HMAC-SHA256, TTL default 5 мин), вне `/api/v1` + permitAll,
+  плохая/просроченная подпись → `403`.
+- **dHash 64-бит** (`DHasher`, своя реализация 9×8, Rec.601 luma) + SHA-256. Дубль-область `(item, unit)`
+  за `dup-window-days` (60). Exact SHA (вкл. REJECTED) → `409 DUPLICATE_PHOTO` + `blocked_attempt`.
+  near-dup (Hamming ≤ `item.dhash_threshold`, **искл. REJECTED**): `static_scene` → флаг в `auto_flags`
+  (пишется `JdbcTemplate`+CAST, как audit/outbox; колонка не в JPA-сущности), иначе → `409` + `blocked_attempt`.
+  `blocked_attempt` пишется в отдельной транзакции (переживает rollback — счётчик для Founder'а).
+- **Поздняя отправка:** `received_at`/`late` — серверное время. MISSED в пределах `late-window` (12 ч) →
+  принято, `late=true`, статус MISSED сохраняется; за окном → `409 LATE_WINDOW_CLOSED`. CANCELLED →
+  `409 TASK_CANCELLED` (+ attempt-аудит), прочие非-PENDING → `409 TASK_NOT_OPEN`.
+- **Теги помощников:** `submission_helper(confirmed_at)`; тегнутый обязан быть членом того же unit (иначе
+  `400`, проверка до записи файла — нет осиротевших блобов). `POST /submissions/{id}/confirm` —
+  только сам тегнутый (`principal == employee_id`), иначе `404`; `confirmed_at` = серверное время.
+- **`notification_outbox` payload — только идентификаторы** (`submissionId/taskInstanceId/unitId`).
+- **Не деплоить до конца P2-5** — выполнено (блок закрыт этим коммитом).
+- Тесты: `DHasherTest` (3, unit), `PhotoSubmissionIT` (7: дубль-матрица, static-флаг, искл. REJECTED +
+  exact-блок, подтверждение помощника/чужой unit, 415/400, signed-URL+подделка), `PhotoUploadLimitIT`
+  (1: 413), `TaskLifecycleIT` (7, обновлён под multipart + late-окно). Все на Testcontainers.
+- **Known limitation:** при откате транзакции уже после записи файла возможен осиротевший блоб на диске
+  (редко; cleanup-джоб позже). Хэши и dup-проверка идут ДО записи, поэтому на блоках файл не пишется.
+
 ## Data / legal — обновление (ZRU-1125, 26 Mar 2026)
 
 - Закон **ZRU-1125 (26.03.2026)** ослабил локализацию: обязательное хранение в стране теперь только для
