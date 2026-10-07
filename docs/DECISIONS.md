@@ -473,6 +473,28 @@ Hard-delete будущих PENDING (работа не велась); `CANCELLED`
 - Тесты: `ScheduleAdminIT` (3: edit cancel+regen с переиспользованием period_key, deactivate, скоуп),
   `TaskLifecycleIT` (4: submit PENDING, submit→CANCELLED `409`+аудит, sweeper MISSED+outbox+lead и submit→MISSED `409`, скоуп/tenant).
 
+### P2-5 — уточнения (accepted; реализуется в P2-5)
+
+Полноценный submission заменяет минимальный submit из P2-4. **До конца P2-5 не деплоить.**
+
+1. **Поздняя отправка.** К задаче в статусе `MISSED` принимаем submission в течение настраиваемого окна
+   (`lebellion.submission.late-window`, **default 12 ч**) — помечаем `late=true`. **Статус MISSED сам не
+   снимается** — решает ревьюер (P2-6). Время клиента не доверяем: фиксируем серверное `received_at`.
+   *Тест: фото через 40 минут после sweeper → принято, late, задача остаётся MISSED.*
+2. **Исключение отклонённых из дубль-поиска.** Фото из `REJECTED`-submission **исключаются из near-duplicate**
+   сравнения. **Точный SHA-256 с отклонённым фото — по-прежнему `409`** (exact-набор включает отклонённые).
+   *Тест: ревьюер отклонил → человек переснял ту же сцену (новый near-dup) → НЕ блокируется.*
+3. **Теги помощников.** `confirmed_at` проставляет **только сам отмеченный сотрудник** (principal == tagged).
+   Отмеченный должен быть **членом того же unit**, иначе отметка отклоняется.
+4. **Загрузка.** Проверка формата по **сигнатуре файла** (magic bytes JPEG/PNG, не по Content-Type),
+   **лимит размера**, **непредсказуемый `storage_key`** (случайный), **короткоживущие signed URL** (HMAC+expiry).
+5. **`notification_outbox` payload — только идентификаторы.** Без имён, телефонов и ссылок на фото.
+
+**Дубль-матрица (обязательна, из CLAUDE.md):** тот же файл (exact SHA → `409`), пережатый (near-dup),
+слегка обрезанный (near-dup), разные фото (принято). `static_scene` near-dup → **флаг** (`auto_flags`),
+не `static_scene` near-dup → `409`. Порог Hamming — per-item (`dhash_threshold`, default 6). Область
+сравнения — `(item, unit)` за 60 дней (не per task_instance).
+
 ## Data / legal — обновление (ZRU-1125, 26 Mar 2026)
 
 - Закон **ZRU-1125 (26.03.2026)** ослабил локализацию: обязательное хранение в стране теперь только для
