@@ -8,8 +8,13 @@ import org.springframework.web.bind.MethodArgumentNotValidException
 import org.springframework.web.bind.MissingRequestHeaderException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.multipart.MaxUploadSizeExceededException
 import uz.lebellion.schedule.web.TaskCancelledException
 import uz.lebellion.schedule.web.TaskNotOpenException
+import uz.lebellion.submission.web.DuplicatePhotoException
+import uz.lebellion.submission.web.LateWindowClosedException
+import uz.lebellion.submission.web.PhotoTooLargeException
+import uz.lebellion.submission.web.UnsupportedImageException
 
 /** Maps domain + framework exceptions to the shared `Error` body with stable codes. */
 @RestControllerAdvice
@@ -22,6 +27,26 @@ class GlobalExceptionHandler {
     @ExceptionHandler(TaskNotOpenException::class)
     fun taskNotOpen(e: TaskNotOpenException) =
         error(HttpStatus.CONFLICT, "TASK_NOT_OPEN", "Task is not open for submission")
+
+    @ExceptionHandler(DuplicatePhotoException::class)
+    fun duplicatePhoto(e: DuplicatePhotoException) =
+        error(HttpStatus.CONFLICT, "DUPLICATE_PHOTO", "Duplicate photo")
+
+    @ExceptionHandler(LateWindowClosedException::class)
+    fun lateWindowClosed(e: LateWindowClosedException) =
+        error(HttpStatus.CONFLICT, "LATE_WINDOW_CLOSED", "Late submission window closed")
+
+    @ExceptionHandler(UnsupportedImageException::class)
+    fun unsupportedImage(e: UnsupportedImageException) =
+        error(HttpStatus.UNSUPPORTED_MEDIA_TYPE, "UNSUPPORTED_IMAGE", "Only JPEG and PNG are accepted")
+
+    @ExceptionHandler(PhotoTooLargeException::class)
+    fun photoTooLarge(e: PhotoTooLargeException) =
+        error(HttpStatus.CONTENT_TOO_LARGE, "PHOTO_TOO_LARGE", "Photo too large")
+
+    @ExceptionHandler(MaxUploadSizeExceededException::class)
+    fun maxUpload(e: MaxUploadSizeExceededException) =
+        error(HttpStatus.CONTENT_TOO_LARGE, "PHOTO_TOO_LARGE", "Photo too large")
 
     @ExceptionHandler(InvalidCredentialsException::class)
     fun invalidCredentials(e: InvalidCredentialsException) =

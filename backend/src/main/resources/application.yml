@@ -10,6 +10,11 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  servlet:
+    multipart:
+      # Hard transport caps; the app also enforces lebellion.submission.max-photo-bytes on the decoded file.
+      max-file-size: 12MB
+      max-request-size: 15MB
 
 server:
   port: ${PORT:8080}
@@ -64,3 +69,15 @@ lebellion:
     horizon-days: 14
     generation-enabled: true
     missed-sweep-enabled: true
+  submission:
+    # Late window after a task's deadline during which a MISSED task still accepts a late-flagged submission;
+    # duplicate-photo comparison window; and the hard per-photo size cap enforced on the decoded file.
+    late-window: PT12H
+    dup-window-days: 60
+    max-photo-bytes: 10485760
+  storage:
+    local-dir: ${PHOTO_STORAGE_DIR:${java.io.tmpdir}/lebellion-photos}
+  media:
+    # DEV default only; override via env in prod. Keys the HMAC of short-lived signed photo URLs.
+    signing-secret: ${MEDIA_SIGNING_SECRET:dev-insecure-media-signing-secret-change-me}
+    url-ttl: PT5M

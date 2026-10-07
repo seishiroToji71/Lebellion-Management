@@ -1402,25 +1402,58 @@ paths:
           type: string
           format: uuid
     post:
-      summary: Submit a task instance
+      summary: Submit a task instance (multipart, with optional photo)
       description: |
-        Marks a PENDING task SUBMITTED. (P2-4: status transition only; photos, duplicate-photo
-        protection and helper tags arrive in P2-5.) FOUNDER any unit; BRANCH_MANAGER own branch;
-        EMPLOYEE own unit. A CANCELLED task yields `409 TASK_CANCELLED` (the attempt is recorded, not a
-        404 — an offline client's late upload gets a clear error); any other non-PENDING status yields
-        `409 TASK_NOT_OPEN`.
+        A full submission: Yes/No `answer`, an optional in-app `photo` (required when the task needs
+        one), and optional repeated `helperUserIds` (co-workers who did it; each must be a member of the
+        unit). Server time is authoritative — the receipt time and the `late` flag are set server-side,
+        client time is ignored.
+
+        Photo rules: the type is checked by MAGIC BYTES (JPEG/PNG only); oversize is `413 PHOTO_TOO_LARGE`;
+        a non-image is `415 UNSUPPORTED_IMAGE`. Duplicate protection scopes by (item, unit) over 60 days:
+        an exact SHA-256 match is always `409 DUPLICATE_PHOTO` (recorded as a blocked attempt); a
+        near-duplicate within the item's Hamming threshold is `409 DUPLICATE_PHOTO` for a normal item but
+        is FLAGGED (`flagged: true`, allowed) for a `static_scene` item. Photos of REJECTED submissions
+        are excluded from the near-duplicate comparison (a legitimate re-shoot is not blocked).
+
+        Status: PENDING → SUBMITTED. A MISSED task still accepts a submission within the late window
+        (flagged `late`, status preserved — the reviewer decides); past the window it is
+        `409 LATE_WINDOW_CLOSED`. A CANCELLED task is `409 TASK_CANCELLED` (attempt recorded, not a 404);
+        any other non-PENDING status is `409 TASK_NOT_OPEN`.
+        FOUNDER any unit; BRANCH_MANAGER own branch; EMPLOYEE own unit (else 404).
       operationId: submitTaskInstance
       tags:
         - Schedules
       security:
         - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - answer
+              properties:
+                answer:
+                  type: boolean
+                helperUserIds:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                photo:
+                  type: string
+                  format: binary
       responses:
         "200":
-          description: The task instance, now SUBMITTED
+          description: The submission (with a signed photo URL and helper tags)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/TaskInstance"
+                $ref: "#/components/schemas/Submission"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "403":
@@ -1432,13 +1465,101 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
         "409":
-          description: "`TASK_CANCELLED` (task was cancelled) or `TASK_NOT_OPEN` (already MISSED/SUBMITTED/DONE/...)"
+          description: "`DUPLICATE_PHOTO`, `TASK_CANCELLED`, `TASK_NOT_OPEN`, or `LATE_WINDOW_CLOSED`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: "`PHOTO_TOO_LARGE` — the photo exceeds the size cap"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415":
+          description: "`UNSUPPORTED_IMAGE` — not a JPEG/PNG (checked by magic bytes)"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
         "426":
           $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/submissions/{submissionId}/confirm:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: submissionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Confirm participation as a tagged helper
+      description: |
+        The TAGGED employee confirms they helped ("как подпись на бумаге"). Only the taggee may call this
+        — a caller who was not tagged on this submission gets a 404. Sets `confirmedAt` to server time.
+      operationId: confirmHelper
+      tags:
+        - Schedules
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The helper tag, now confirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Helper"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Submission not found, or the caller is not a tagged helper on it
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /media/{storageKey}:
+    get:
+      summary: Fetch photo bytes via a short-lived signed URL
+      description: |
+        Serves a stored photo. Lives OUTSIDE `/api/v1` (like `/health`), so it needs neither the app
+        version header nor a bearer token — it is authorised solely by the HMAC `sig` and `exp` query
+        params from the signed URL in a Submission's `photo.url`. An invalid/expired signature or an
+        unknown key is a flat `403`.
+      operationId: getMedia
+      tags:
+        - Media
+      parameters:
+        - name: storageKey
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: exp
+          in: query
+          required: true
+          schema:
+            type: integer
+            format: int64
+        - name: sig
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The image bytes
+          content:
+            image/jpeg: {}
+            image/png: {}
+        "403":
+          description: Missing, invalid, or expired signature
 
 components:
   securitySchemes:
@@ -2534,6 +2655,85 @@ components:
           description: Resolved acting_lead -> lead -> branch manager; null only when source is NONE.
         source:
           $ref: "#/components/schemas/LeadSource"
+
+    Helper:
+      type: object
+      required:
+        - employeeId
+      properties:
+        employeeId:
+          type: string
+          format: uuid
+        confirmedAt:
+          type: [string, "null"]
+          format: date-time
+          description: Set only when the tagged employee has confirmed their participation.
+
+    Submission:
+      type: object
+      required:
+        - id
+        - taskInstanceId
+        - submittedByUserId
+        - answer
+        - receivedAt
+        - late
+        - status
+        - flagged
+        - helpers
+      properties:
+        id:
+          type: string
+          format: uuid
+        taskInstanceId:
+          type: string
+          format: uuid
+        submittedByUserId:
+          type: string
+          format: uuid
+        answer:
+          type: boolean
+        receivedAt:
+          type: string
+          format: date-time
+          description: Server receipt time (authoritative).
+        late:
+          type: boolean
+          description: True when submitted after the task's deadline.
+        status:
+          type: string
+          enum: [SUBMITTED, ACCEPTED, REJECTED]
+        flagged:
+          type: boolean
+          description: True when a static-scene near-duplicate was flagged for reviewer attention (not blocked).
+        photo:
+          oneOf:
+            - $ref: "#/components/schemas/PhotoRef"
+            - type: "null"
+        helpers:
+          type: array
+          items:
+            $ref: "#/components/schemas/Helper"
+
+    PhotoRef:
+      type: object
+      required:
+        - id
+        - url
+        - contentType
+        - sizeBytes
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          description: Short-lived signed URL (under /media) to fetch the bytes.
+        contentType:
+          type: string
+        sizeBytes:
+          type: integer
+          format: int64
 
     Error:
       type: object

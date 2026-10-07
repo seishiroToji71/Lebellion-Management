@@ -10,6 +10,8 @@ import java.util.UUID
  */
 interface ChecklistItemRepository : JpaRepository<ChecklistItem, UUID> {
 
+    fun findByIdAndOrganizationId(id: UUID, organizationId: UUID): ChecklistItem?
+
     fun findByOrganizationIdAndTemplateIdOrderBySortOrderAscIdAsc(
         organizationId: UUID,
         templateId: UUID,

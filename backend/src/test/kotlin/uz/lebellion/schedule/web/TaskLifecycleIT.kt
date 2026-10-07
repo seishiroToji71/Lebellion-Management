@@ -22,17 +22,19 @@ import uz.lebellion.schedule.domain.TaskInstance
 import uz.lebellion.schedule.domain.TaskStatus
 import uz.lebellion.schedule.repo.TaskInstanceRepository
 import uz.lebellion.schedule.service.MissedSweeper
+import uz.lebellion.support.MultipartBody
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 
 /**
- * Task lifecycle (P2-4): the minimal submit transition and its guards, plus the MISSED sweeper. Jobs are
- * disabled; the sweeper is invoked explicitly. Instances are seeded directly with real FK ids from the
- * HTTP-built org so we can place a task in any status / due time.
+ * Task lifecycle (P2-4/P2-5): the submit status machine (PENDING/CANCELLED/MISSED-late/closed/not-open)
+ * and the MISSED sweeper. Jobs are disabled; the sweeper is invoked explicitly. Tasks are seeded directly
+ * with photo_required=false so these cases need no photo (photo/dup/helper paths live in PhotoSubmissionIT).
  */
 @SpringBootTest(
     webEnvironment = RANDOM_PORT,
@@ -72,6 +74,18 @@ class TaskLifecycleIT {
     }
 
     private fun post(path: String, body: Map<String, Any?>, headers: Map<String, String>) = send("POST", path, body, headers)
+
+    /** A submit with no photo (seeded tasks are photo_required=false): multipart with just `answer`. */
+    private fun submit(token: String, taskId: UUID): HttpResponse<String> {
+        val built = MultipartBody.build(listOf(MultipartBody.Field("answer", "true")))
+        val b = HttpRequest.newBuilder()
+            .uri(URI.create("http://localhost:$port/api/v1/task-instances/$taskId/submit"))
+            .header("Content-Type", built.contentType)
+            .header("X-App-Version", "1.4.0")
+            .header("Authorization", "Bearer $token")
+            .POST(HttpRequest.BodyPublishers.ofByteArray(built.body))
+        return http.send(b.build(), HttpResponse.BodyHandlers.ofString())
+    }
 
     @Suppress("UNCHECKED_CAST")
     private fun parse(body: String): Map<String, Any?> = mapper.readValue(body, Map::class.java) as Map<String, Any?>
@@ -120,8 +134,6 @@ class TaskLifecycleIT {
         ),
     ).id!!
 
-    private fun submit(token: String, taskId: UUID) = send("POST", "/api/v1/task-instances/$taskId/submit", null, bearer(token))
-
     private fun countOutbox(orgId: String, type: String): Int =
         jdbc.queryForObject("select count(*) from notification_outbox where organization_id = CAST(? AS uuid) and type = ?", Int::class.java, orgId, type)!!
 
@@ -139,6 +151,7 @@ class TaskLifecycleIT {
         val res = submit(emp, task)
         assertEquals(200, res.statusCode(), res.body())
         assertEquals("SUBMITTED", parse(res.body())["status"])
+        assertEquals(false, parse(res.body())["late"])
         assertEquals(TaskStatus.SUBMITTED, taskInstances.findById(task).get().status)
         assertTrue(countOutbox(c.orgId, "TASK_SUBMITTED") >= 1)
     }
@@ -157,9 +170,8 @@ class TaskLifecycleIT {
     }
 
     @Test
-    fun `the sweeper marks overdue tasks MISSED, flags the lead, and then submission is 409 TASK_NOT_OPEN`() {
+    fun `the sweeper marks overdue tasks MISSED and flags the unit lead`() {
         val c = setup()
-        // make the unit's employee its lead, so the MISSED notification carries a lead
         val lead = users.save(AppUser(organizationId = UUID.fromString(c.orgId), name = "Lead", role = Role.EMPLOYEE, unitId = UUID.fromString(c.unit)))
         val leadId = lead.id!!.toString()
         assertEquals(
@@ -175,8 +187,38 @@ class TaskLifecycleIT {
             Int::class.java, c.orgId, leadId,
         )!!
         assertTrue(missedWithLead >= 1, "missed task flags the unit's effective lead")
+    }
 
+    @Test
+    fun `a late submission to a MISSED task within the window is accepted, flagged late, and the task stays MISSED`() {
+        val c = setup()
+        // the photo arrived 40 minutes after the sweeper marked it MISSED (default late window is 12h)
+        val task = seedTask(c, Instant.now().minus(40, ChronoUnit.MINUTES), TaskStatus.MISSED)
         val emp = employeeToken(c.orgId, c.unit)
+
+        val res = submit(emp, task)
+        assertEquals(200, res.statusCode(), res.body())
+        assertEquals(true, parse(res.body())["late"], "a submission after the deadline is flagged late")
+        assertEquals(TaskStatus.MISSED, taskInstances.findById(task).get().status, "MISSED is not auto-cleared; the reviewer decides")
+    }
+
+    @Test
+    fun `a late submission after the window has closed is 409 LATE_WINDOW_CLOSED`() {
+        val c = setup()
+        val task = seedTask(c, Instant.now().minus(13, ChronoUnit.HOURS), TaskStatus.MISSED) // past the 12h window
+        val emp = employeeToken(c.orgId, c.unit)
+
+        val res = submit(emp, task)
+        assertEquals(409, res.statusCode(), res.body())
+        assertEquals("LATE_WINDOW_CLOSED", parse(res.body())["code"])
+    }
+
+    @Test
+    fun `submitting an already-submitted task is 409 TASK_NOT_OPEN`() {
+        val c = setup()
+        val task = seedTask(c, Instant.now().plusSeconds(3600), TaskStatus.SUBMITTED)
+        val emp = employeeToken(c.orgId, c.unit)
+
         val res = submit(emp, task)
         assertEquals(409, res.statusCode(), res.body())
         assertEquals("TASK_NOT_OPEN", parse(res.body())["code"])
@@ -189,14 +231,12 @@ class TaskLifecycleIT {
         val c = setup()
         val task = seedTask(c, Instant.now().plusSeconds(3600), TaskStatus.PENDING)
 
-        // an employee of a different unit cannot submit (404 — no existence leak)
         val otherUnit = parse(
             post("/api/v1/branches/${parse(post("/api/v1/branches", mapOf("name" to "B2"), bearer(c.token)).body())["id"]}/units", mapOf("name" to "U2"), bearer(c.token)).body(),
         )["id"] as String
         val empElsewhere = employeeToken(c.orgId, otherUnit)
         assertEquals(404, submit(empElsewhere, task).statusCode())
 
-        // another org cannot submit
         val other = setup()
         assertEquals(404, submit(other.token, task).statusCode())
     }

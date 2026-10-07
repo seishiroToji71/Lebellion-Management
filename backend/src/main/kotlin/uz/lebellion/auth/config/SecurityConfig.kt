@@ -56,6 +56,9 @@ class SecurityConfig(private val props: AuthProperties) {
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests {
                 it.requestMatchers("/health").permitAll()
+                // Photo bytes are served here, OUTSIDE /api/v1 (so exempt from the app-version gate) and
+                // authorised solely by the short-lived signed URL — validated in MediaController.
+                it.requestMatchers("/media/**").permitAll()
                 // Token-free auth endpoints that establish or restore a session. Explicit allow-list
                 // (deny-by-default): anything not listed — incl. /api/v1/me, /auth/change-password and
                 // future /auth/* that need a token — stays authenticated.
