@@ -42,6 +42,14 @@ class AppUser(
     @Column(name = "must_change_password", nullable = false)
     var mustChangePassword: Boolean = false,
 
+    /** Granular grant: may enter MANUAL/NUMERIC scores. FOUNDER always may, regardless of this flag. */
+    @Column(name = "can_score", nullable = false)
+    var canScore: Boolean = false,
+
+    /** Granular grant: may review (accept/reject) submissions. FOUNDER always may, as does a unit lead. */
+    @Column(name = "can_review", nullable = false)
+    var canReview: Boolean = false,
+
     @Column(name = "token_version", nullable = false)
     var tokenVersion: Int = 0,
 

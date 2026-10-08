@@ -26,6 +26,12 @@ interface TaskInstanceRepository : JpaRepository<TaskInstance, UUID> {
 
     fun findByScheduleId(scheduleId: UUID): List<TaskInstance>
 
+    /** Zone progress "N of M": total non-cancelled occurrences of one (schedule, period). */
+    fun countByScheduleIdAndPeriodKeyAndStatusNot(scheduleId: UUID, periodKey: String, status: TaskStatus): Long
+
+    /** Zone progress "N of M": how many of that (schedule, period) are DONE. */
+    fun countByScheduleIdAndPeriodKeyAndStatus(scheduleId: UUID, periodKey: String, status: TaskStatus): Long
+
     /** Overdue PENDING instances — the MISSED sweeper's work list. */
     fun findByStatusAndDueAtLessThanEqual(status: TaskStatus, dueAt: Instant): List<TaskInstance>
 

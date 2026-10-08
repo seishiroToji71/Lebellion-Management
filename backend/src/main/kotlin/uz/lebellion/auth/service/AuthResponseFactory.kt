@@ -28,5 +28,7 @@ class AuthResponseFactory {
         branchId = user.branchId,
         unitId = user.unitId,
         mustChangePassword = user.mustChangePassword,
+        canScore = user.canScore,
+        canReview = user.canReview,
     )
 }

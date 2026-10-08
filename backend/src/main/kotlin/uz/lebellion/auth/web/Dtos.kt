@@ -49,6 +49,8 @@ data class UserProfile(
     val branchId: UUID?,
     val unitId: UUID?,
     val mustChangePassword: Boolean,
+    val canScore: Boolean,
+    val canReview: Boolean,
 )
 
 data class AuthResponse(

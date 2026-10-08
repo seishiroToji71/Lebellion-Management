@@ -20,6 +20,7 @@ import uz.lebellion.auth.service.AuthResponseFactory
 import uz.lebellion.auth.token.HmacCodec
 import uz.lebellion.auth.token.SecureCodeGenerator
 import uz.lebellion.auth.web.ConflictException
+import uz.lebellion.auth.web.ForbiddenException
 import uz.lebellion.auth.web.NotFoundException
 import uz.lebellion.auth.web.RateLimitedException
 import uz.lebellion.auth.web.UserProfile
@@ -152,6 +153,23 @@ class EmployeeService(
             expiresAt = saved.expiresAt,
             createdAt = saved.createdAt,
         )
+    }
+
+    /**
+     * Grant/revoke the granular `can_score` / `can_review` permissions. FOUNDER-only (per the rule that
+     * only a Founder may hand these out); a FOUNDER already has both implicitly. Flags are read from the
+     * DB on each request, so the change takes effect immediately without re-issuing the user's token.
+     */
+    @Transactional
+    fun setPermissions(principal: AuthPrincipal, employeeId: UUID, req: uz.lebellion.org.web.SetPermissionsRequest): UserProfile {
+        if (principal.role != Role.FOUNDER) throw ForbiddenException("only a founder may grant review/score permissions")
+        val target = users.findByIdAndOrganizationId(employeeId, principal.organizationId)
+            ?: throw NotFoundException("employee not found")
+        target.canScore = req.canScore
+        target.canReview = req.canReview
+        users.save(target)
+        audit("PERMISSIONS_UPDATED", principal, target.id!!, mapOf("canScore" to req.canScore, "canReview" to req.canReview))
+        return profiles.profile(target)
     }
 
     /**

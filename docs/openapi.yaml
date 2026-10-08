@@ -878,6 +878,54 @@ paths:
         "429":
           $ref: "#/components/responses/RateLimited"
 
+  /api/v1/employees/{employeeId}/permissions:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: employeeId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    put:
+      summary: Grant/revoke can_score & can_review on an employee (FOUNDER only)
+      description: |
+        Sets the granular review/score grants (full desired state). FOUNDER-only — a FOUNDER already
+        holds both implicitly, and a unit lead can review regardless. The flags are read from the DB on
+        each request, so a change takes effect immediately without re-issuing the user's token.
+      operationId: setEmployeePermissions
+      tags:
+        - Employees
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPermissionsRequest"
+      responses:
+        "200":
+          description: The updated employee profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Employee not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
   /api/v1/criteria:
     parameters:
       - $ref: "#/components/parameters/XAppVersion"
@@ -1561,6 +1609,294 @@ paths:
         "403":
           description: Missing, invalid, or expired signature
 
+  /api/v1/submissions/{submissionId}/review:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: submissionId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Review (accept/reject) a submission
+      description: |
+        Requires `can_review` (FOUNDER, the unit's effective lead, or an `app_user.can_review` holder).
+        A reviewer may NOT review their own submission (as submitter or a tagged helper) → `403
+        CANNOT_REVIEW_OWN`. Only a FOUNDER may change an already-decided submission; a non-FOUNDER gets
+        `409 ALREADY_REVIEWED`. ACCEPT closes the zone (task → DONE); REJECT makes the task resubmittable
+        (SUBMITTED → PENDING; a MISSED task stays MISSED for its late window). Every decision is audited.
+      operationId: reviewSubmission
+      tags:
+        - Review
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReviewRequest"
+      responses:
+        "200":
+          description: The recorded decision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: "`FORBIDDEN` (no can_review) or `CANNOT_REVIEW_OWN`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Submission not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: "`ALREADY_REVIEWED` — already decided and the caller is not a FOUNDER"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/task-instances/{taskInstanceId}/manual-score:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: taskInstanceId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Score a MANUAL task (FULL/PARTIAL/ZERO)
+      description: |
+        Requires `can_score` (FOUNDER or an `app_user.can_score` holder); a scorer may not score a task
+        they submitted or helped on (`403 CANNOT_SCORE_OWN`). Awards `points × {1, 0.5, 0}`. One score per
+        task (re-scoring updates it). Recommendation input only — the system never computes pay.
+      operationId: scoreManual
+      tags:
+        - Review
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ManualScoreRequest"
+      responses:
+        "200":
+          description: The recorded score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskScore"
+        "400":
+          description: "`NOT_SCORABLE` — the item is not MANUAL"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: "`FORBIDDEN` (no can_score) or `CANNOT_SCORE_OWN`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Task not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/task-instances/{taskInstanceId}/numeric-score:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: taskInstanceId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      summary: Score a NUMERIC task (value → band → points)
+      description: |
+        Requires `can_score`; no self-scoring. The value is mapped through the item's bands
+        (`[lower, upper)`) to points; a value with no matching band is `400 NOT_SCORABLE`.
+      operationId: scoreNumeric
+      tags:
+        - Review
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NumericScoreRequest"
+      responses:
+        "200":
+          description: The recorded score
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskScore"
+        "400":
+          description: "`NOT_SCORABLE` — the item is not NUMERIC, or no band matches the value"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Task not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/items/{itemId}/numeric-bands:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: itemId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      summary: List a NUMERIC item's scoring bands
+      operationId: listNumericBands
+      tags:
+        - Review
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The item's bands
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/NumericBand"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Item not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+    post:
+      summary: Add a scoring band to a NUMERIC item (FOUNDER only)
+      description: Band is `[lowerBound, upperBound)` — null lower = -inf, null upper = +inf.
+      operationId: createNumericBand
+      tags:
+        - Review
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateNumericBandRequest"
+      responses:
+        "201":
+          description: Band created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NumericBand"
+        "400":
+          description: "`NOT_SCORABLE` — not a NUMERIC item, or lowerBound >= upperBound"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Item not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
+  /api/v1/schedules/{scheduleId}/progress:
+    parameters:
+      - $ref: "#/components/parameters/XAppVersion"
+      - name: scheduleId
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: periodKey
+        in: query
+        required: true
+        schema:
+          type: string
+    get:
+      summary: Zone progress "N of M" for a period
+      description: DONE occurrences over the total non-cancelled ones for one `(schedule, period)`.
+      operationId: getZoneProgress
+      tags:
+        - Review
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The progress counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ZoneProgress"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          description: Schedule not found in the caller's scope
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "426":
+          $ref: "#/components/responses/UpgradeRequired"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1844,6 +2180,8 @@ components:
         - role
         - active
         - mustChangePassword
+        - canScore
+        - canReview
       properties:
         id:
           type: string
@@ -1873,6 +2211,12 @@ components:
         mustChangePassword:
           type: boolean
           description: True after an admin/temporary password reset; the client must force a change.
+        canScore:
+          type: boolean
+          description: Granular grant to enter MANUAL/NUMERIC scores (FOUNDER always may).
+        canReview:
+          type: boolean
+          description: Granular grant to review submissions (FOUNDER and a unit lead always may).
 
     CreateInviteRequest:
       type: object
@@ -2732,6 +3076,180 @@ components:
         contentType:
           type: string
         sizeBytes:
+          type: integer
+          format: int64
+
+    SetPermissionsRequest:
+      type: object
+      required:
+        - canScore
+        - canReview
+      properties:
+        canScore:
+          type: boolean
+        canReview:
+          type: boolean
+
+    ReviewDecision:
+      type: string
+      enum: [ACCEPTED, REJECTED]
+
+    ManualGrade:
+      type: string
+      enum: [FULL, PARTIAL, ZERO]
+      description: Multiplier of the item's points — FULL=1.0, PARTIAL=0.5, ZERO=0.0.
+
+    ReviewRequest:
+      type: object
+      required:
+        - decision
+      properties:
+        decision:
+          $ref: "#/components/schemas/ReviewDecision"
+        reason:
+          type: [string, "null"]
+          maxLength: 64
+          description: Quick reject reason code (optional).
+        comment:
+          type: [string, "null"]
+          maxLength: 4000
+
+    ReviewResult:
+      type: object
+      required:
+        - submissionId
+        - decision
+        - reviewerUserId
+        - submissionStatus
+        - taskInstanceId
+        - taskStatus
+        - override
+      properties:
+        submissionId:
+          type: string
+          format: uuid
+        decision:
+          $ref: "#/components/schemas/ReviewDecision"
+        reviewerUserId:
+          type: string
+          format: uuid
+        submissionStatus:
+          type: string
+          enum: [SUBMITTED, ACCEPTED, REJECTED]
+        taskInstanceId:
+          type: string
+          format: uuid
+        taskStatus:
+          $ref: "#/components/schemas/TaskStatus"
+        override:
+          type: boolean
+          description: True when this decision reversed a previous one (a FOUNDER overriding a lead).
+
+    ManualScoreRequest:
+      type: object
+      required:
+        - grade
+      properties:
+        grade:
+          $ref: "#/components/schemas/ManualGrade"
+
+    NumericScoreRequest:
+      type: object
+      required:
+        - value
+      properties:
+        value:
+          type: number
+
+    TaskScore:
+      type: object
+      required:
+        - taskInstanceId
+        - itemId
+        - reviewerUserId
+        - awardedPoints
+      properties:
+        taskInstanceId:
+          type: string
+          format: uuid
+        itemId:
+          type: string
+          format: uuid
+        reviewerUserId:
+          type: string
+          format: uuid
+        grade:
+          oneOf:
+            - $ref: "#/components/schemas/ManualGrade"
+            - type: "null"
+        numericValue:
+          type: [number, "null"]
+        awardedPoints:
+          type: integer
+          description: Computed recommendation input; the system never computes pay.
+
+    CreateNumericBandRequest:
+      type: object
+      required:
+        - points
+      properties:
+        lowerBound:
+          type: [number, "null"]
+          description: Inclusive; null = -infinity.
+        upperBound:
+          type: [number, "null"]
+          description: Exclusive; null = +infinity.
+        points:
+          type: integer
+        label:
+          type: [string, "null"]
+          maxLength: 64
+        sortOrder:
+          type: integer
+          default: 0
+
+    NumericBand:
+      type: object
+      required:
+        - id
+        - itemId
+        - points
+        - sortOrder
+      properties:
+        id:
+          type: string
+          format: uuid
+        itemId:
+          type: string
+          format: uuid
+        lowerBound:
+          type: [number, "null"]
+        upperBound:
+          type: [number, "null"]
+        points:
+          type: integer
+        label:
+          type: [string, "null"]
+        sortOrder:
+          type: integer
+
+    ZoneProgress:
+      type: object
+      required:
+        - scheduleId
+        - periodKey
+        - total
+        - done
+      properties:
+        scheduleId:
+          type: string
+          format: uuid
+        periodKey:
+          type: string
+        total:
+          type: integer
+          format: int64
+        done:
           type: integer
           format: int64
 

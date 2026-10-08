@@ -11,6 +11,10 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.multipart.MaxUploadSizeExceededException
 import uz.lebellion.schedule.web.TaskCancelledException
 import uz.lebellion.schedule.web.TaskNotOpenException
+import uz.lebellion.review.web.AlreadyReviewedException
+import uz.lebellion.review.web.CannotReviewOwnException
+import uz.lebellion.review.web.CannotScoreOwnException
+import uz.lebellion.review.web.NotScorableException
 import uz.lebellion.submission.web.DuplicatePhotoException
 import uz.lebellion.submission.web.LateWindowClosedException
 import uz.lebellion.submission.web.PhotoTooLargeException
@@ -47,6 +51,22 @@ class GlobalExceptionHandler {
     @ExceptionHandler(MaxUploadSizeExceededException::class)
     fun maxUpload(e: MaxUploadSizeExceededException) =
         error(HttpStatus.CONTENT_TOO_LARGE, "PHOTO_TOO_LARGE", "Photo too large")
+
+    @ExceptionHandler(CannotReviewOwnException::class)
+    fun cannotReviewOwn(e: CannotReviewOwnException) =
+        error(HttpStatus.FORBIDDEN, "CANNOT_REVIEW_OWN", "Cannot review your own submission")
+
+    @ExceptionHandler(AlreadyReviewedException::class)
+    fun alreadyReviewed(e: AlreadyReviewedException) =
+        error(HttpStatus.CONFLICT, "ALREADY_REVIEWED", "Submission is already reviewed")
+
+    @ExceptionHandler(CannotScoreOwnException::class)
+    fun cannotScoreOwn(e: CannotScoreOwnException) =
+        error(HttpStatus.FORBIDDEN, "CANNOT_SCORE_OWN", "Cannot score your own task")
+
+    @ExceptionHandler(NotScorableException::class)
+    fun notScorable(e: NotScorableException) =
+        error(HttpStatus.BAD_REQUEST, "NOT_SCORABLE", e.message ?: "Not scorable")
 
     @ExceptionHandler(InvalidCredentialsException::class)
     fun invalidCredentials(e: InvalidCredentialsException) =

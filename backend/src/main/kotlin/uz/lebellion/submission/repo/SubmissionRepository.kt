@@ -6,4 +6,5 @@ import java.util.UUID
 
 interface SubmissionRepository : JpaRepository<Submission, UUID> {
     fun findByIdAndOrganizationId(id: UUID, organizationId: UUID): Submission?
+    fun findByTaskInstanceId(taskInstanceId: UUID): List<Submission>
 }
