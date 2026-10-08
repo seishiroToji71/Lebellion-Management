@@ -15,6 +15,13 @@ java {
     }
 }
 
+// The app's entry point. Pinned explicitly because the repo also carries a manual `main` (the
+// dhashCalibration tool, uz.lebellion.tools.DhashCalibrationKt) in the main source set — without this,
+// `resolveMainClassName`/`bootJar` fail with "Unable to find a single main class".
+springBoot {
+    mainClass.set("uz.lebellion.LebellionApplicationKt")
+}
+
 repositories {
     mavenCentral()
 }
