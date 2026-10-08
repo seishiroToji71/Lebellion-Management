@@ -53,3 +53,15 @@ allOpen {
 tasks.withType<Test> {
     useJUnitPlatform()
 }
+
+// dHash calibration helper — NOT a test, NOT wired into `check`/CI. Prints a pairwise Hamming-distance
+// matrix for a folder of sample photos so a human can pick per-item thresholds.
+//   ./gradlew dhashCalibration            (defaults to docs/samples/photos)
+//   ./gradlew dhashCalibration -Pdir=/abs/path/to/photos
+tasks.register<JavaExec>("dhashCalibration") {
+    group = "help"
+    description = "Print a dHash Hamming-distance matrix for docs/samples/photos (manual tool, not CI)."
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("uz.lebellion.tools.DhashCalibrationKt")
+    if (project.hasProperty("dir")) args(project.property("dir").toString())
+}

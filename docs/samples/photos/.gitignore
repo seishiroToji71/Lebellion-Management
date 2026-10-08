@@ -1,0 +1,4 @@
+# Keep the folder and its docs, but never commit real sample photos.
+*
+!.gitignore
+!README.md
