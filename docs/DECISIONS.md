@@ -571,6 +571,30 @@ KPI-агрегация поверх пунктов и **рекомендация
   FOUNDER override + ALREADY_REVIEWED, zone-progress N из M, MANUAL 1/0.5/0 + can_score, self-scoring,
   NUMERIC [lower,upper)+0-best+no-band-400, грант через `/employees/{id}/permissions`.
 
+## P2-6b — score_sheet: финальные решения (accepted)
+
+Маппинг принят. Источник — `docs/seed/kpi_catalog.json` (gitignored), читается seed-командой по пути из
+конфигурации; тесты — маленькая фикстура в `src/test/resources` (не настоящий каталог).
+
+- **Полосы — в отдельном `docs/seed/kpi_bands.json`** (gitignored), НЕ в `kpi_catalog.json` (чтобы пересборка
+  каталога не трогала полосы). Значения из xlsx: шеф `[96,100]+20 / [91,95] 0 / [86,90] −10 / [0,85] −20`;
+  мангалщик `[98,100]+10 / [92,97] 0 / [86,91] −5 / [0,85] −10`; донарщик/Tandirchi/Salatchi/Issiq
+  `[97,100]+10 / [91,96] 0 / [86,90] −5 / [0,85] −10`; узбекские (Ofitsiant/Menejer/Mudir/Снабженец/Хостес)
+  `[86,100] BONUS / [76,85] BASE / [0,75] PENALTY`, `percent = null`.
+- **Ofitsiant временно НЕ заводим.** Seed для **10 листов каталога**; ofitsiant добавится позже с обновлённым
+  каталогом. **Seed идемпотентен по `code C###`** (критерии) и `role_key` (листы) — повторный прогон обновляет, не дублирует.
+- **`kpi_criterion` — отдельная таблица** (не `criterion_library`, не `checklist_item`): `code`, `type`,
+  `title_ru`, `title_uz`, `original_text`, nullable **`checklist_item_id` (зарезервировано, в v1 НЕ используется)**.
+- **Подсказок по задачам в v1 НЕТ:** связи критерий↔задача в каталоге нет, мы её не выдумываем. Ревьюер
+  проставляет оценки вручную — `evaluation_item.awarded_points` это решение ревьюера (без авто-suggested).
+- **`name_uz` листа = `position_suggestion`** (без слова «(предположение)»). **Предположение зафиксировано:**
+  uz-названия Tandirchi / Salatchi / Issiq ovqatchi помечены в каталоге «(предположение)» — уточнить у владельца.
+- **Позиции — в P3-1** (линковка `position.score_sheet_id`); сейчас `score_sheet` несёт `role_key` +
+  `position_suggestion` + `active` (снабженец/хостес `active=false`, без позиции).
+- Дубли-пункты НЕ объединяем (possible_duplicates сохраняются как отдельные критерии). Σ points = 100 (строго).
+  Полосы покрывают 0..100 включительно, без дыр/пересечений; итог округляем **half-up** перед поиском полосы
+  (тест 90.5→91). **FINALIZE** — снимок (`max_points`, `final_score`, `band_label`, `band_percent`), неизменяем.
+
 ## Онбординг, позиции, селфи, расписание — решения владельца (accepted)
 
 ### Филиалы (первый клиент)
