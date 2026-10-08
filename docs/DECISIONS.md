@@ -550,6 +550,27 @@ KPI-агрегация поверх пунктов и **рекомендация
 **Отдельная мелкая задача после P2-6:** скрипт **калибровки dHash** — читает `docs/samples/photos`,
 печатает матрицу расстояний Хэмминга по всем парам. **Не тест, не часть CI.**
 
+### P2-6 — реализовано (accepted, миграция V10)
+
+- Колонки `app_user.can_score` / `can_review` (V10). Грант — `PUT /employees/{id}/permissions` (FOUNDER-only;
+  флаги читаются из БД на каждом запросе, токен не перевыпускается). `UserProfile` отдаёт оба флага.
+- **Review** (`review` table, модуль `review`): `POST /submissions/{id}/review` {decision, reason?, comment?}.
+  Право = FOUNDER ∨ effective lead ∨ `can_review`. Ревьюер ∉ {submitter, helpers} → `403 CANNOT_REVIEW_OWN`.
+  Уже решённая + не-FOUNDER → `409 ALREADY_REVIEWED`; FOUNDER переопределяет (`override=true`). ACCEPT →
+  submission ACCEPTED + task **DONE** (закрытие зоны); REJECT → submission REJECTED + task снова submittable
+  (SUBMITTED→PENDING; MISSED остаётся MISSED → пересдача в окне). Все решения → `audit_log` (REVIEW_*).
+- **Scoring** (`task_score`, одна строка на task, re-score обновляет): `POST /task-instances/{id}/manual-score`
+  {grade FULL/PARTIAL/ZERO → `points×{1,0.5,0}`, round}; `POST /task-instances/{id}/numeric-score` {value →
+  полоса → points}. Право = FOUNDER ∨ `can_score`; self-scoring (∈ submitter/helpers задачи) → `403 CANNOT_SCORE_OWN`;
+  неверный тип/нет полосы → `400 NOT_SCORABLE`. Рекомендация-вход; **зарплату не считаем**.
+- **NUMERIC-полосы** (`numeric_band`): `POST/GET /items/{id}/numeric-bands` (FOUNDER). `[lower, upper)` —
+  lower вкл., upper искл.; null = ±∞. Тест: 0 → лучшая полоса для «меньше = лучше»; 3 → `[3,6)`; 6 → `[6,∞)`.
+- **Прогресс зон** `GET /schedules/{id}/progress?periodKey` → {total, done} (DONE / всего не-CANCELLED за период).
+- **Отложено (P2-6b):** `score_sheet` KPI-агрегация + рекомендация бонус/штраф (нужен ввод владельца).
+- Тесты: `ReviewScoringIT` (10, Testcontainers): accept/reject+пересдача, can_review (lead/flag/plain 403/own),
+  FOUNDER override + ALREADY_REVIEWED, zone-progress N из M, MANUAL 1/0.5/0 + can_score, self-scoring,
+  NUMERIC [lower,upper)+0-best+no-band-400, грант через `/employees/{id}/permissions`.
+
 ## Data / legal — обновление (ZRU-1125, 26 Mar 2026)
 
 - Закон **ZRU-1125 (26.03.2026)** ослабил локализацию: обязательное хранение в стране теперь только для
