@@ -81,3 +81,8 @@ lebellion:
     # DEV default only; override via env in prod. Keys the HMAC of short-lived signed photo URLs.
     signing-secret: ${MEDIA_SIGNING_SECRET:dev-insecure-media-signing-secret-change-me}
     url-ttl: PT5M
+  kpi:
+    # Local, gitignored seed inputs; unset by default (blank => seeder treats as not configured).
+    # Set these to run POST /api/v1/kpi/seed. Tests override via @DynamicPropertySource with a fixture.
+    catalog-path: ${KPI_CATALOG_PATH:}
+    bands-path: ${KPI_BANDS_PATH:}

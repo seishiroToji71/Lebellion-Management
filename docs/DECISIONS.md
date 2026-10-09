@@ -600,9 +600,11 @@ KPI-агрегация поверх пунктов и **рекомендация
   Маппинг `role(RU)→role_key` зашит в сидере; `name_uz` = `position_suggestion` (без «(предположение)»), а
   для снабженца/хостес (там пометка «— нет в списке должностей») — fallback на `name_ru`. Прогон идемпотентен.
 - **Обновлённый каталог (accepted):** 224 критерия (новые **C208–C224**; C001–C207 не менялись), **11 листов**,
-  **410 строк**, каждый лист = 100. Добавлен лист **«Официант»** (position `Ofisiant`, 25×4): **active**,
-  `role_key = OFISIANT`, bands узбекские (`86–100 / 76–85 / 0–75`, percent NULL). Временный лист ofitsiant не
-  нужен (его не заводили). Сверка — `KpiCatalogIntegrityTest` (11 / 410 / сумма 100; в CI скип, каталог gitignored).
+  **410 строк**, каждый лист = 100. Добавлен лист **«Официант»** (position `Ofisiant`, `name_uz = Ofisiant`, 25×4):
+  **active**, `role_key = ofitsiant` (строчными, как указал владелец), bands узбекские (`86–100 / 76–85 / 0–75`,
+  percent NULL). Временный лист ofitsiant не нужен (его не заводили). Пути сидера — env `KPI_CATALOG_PATH` /
+  `KPI_BANDS_PATH` (→ `lebellion.kpi.catalog-path/bands-path`). Сверка — `KpiCatalogIntegrityTest`
+  (11 / 410 / сумма 100; в CI скип, каталог gitignored).
 
 ## Онбординг, позиции, селфи, расписание — решения владельца (accepted)
 
