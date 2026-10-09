@@ -1,0 +1,10 @@
+{
+  "bands": {
+    "BOSH_OSHPAZ": [
+      {"from": 96, "to": 100, "label": "BONUS", "percent": 20},
+      {"from": 91, "to": 95, "label": "BASE", "percent": 0},
+      {"from": 86, "to": 90, "label": "PENALTY", "percent": -10},
+      {"from": 0, "to": 85, "label": "PENALTY", "percent": -20}
+    ]
+  }
+}

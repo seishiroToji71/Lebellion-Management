@@ -1,0 +1,18 @@
+{
+  "note": "Tiny fixture for KpiSeedIT — not the real client catalog.",
+  "criteria": [
+    {"id": "C001", "type": "MANUAL", "short_ru": "Крит один", "short_uz": "Krit bir", "original_text": "Длинный исходный текст критерия один"},
+    {"id": "C002", "type": "PHOTO", "short_ru": "Крит два", "short_uz": "Krit ikki", "original_text": "Длинный исходный текст критерия два"}
+  ],
+  "score_sheets": [
+    {
+      "role": "Шеф повар",
+      "position_suggestion": "Bosh oshpaz",
+      "total_points": 100.0,
+      "items": [
+        {"criterion_id": "C001", "points": 60.0, "direction": "План"},
+        {"criterion_id": "C002", "points": 40.0, "direction": "Чистота"}
+      ]
+    }
+  ]
+}
