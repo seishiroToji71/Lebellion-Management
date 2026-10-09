@@ -49,6 +49,7 @@ class KpiCatalogSeeder(
         "Хостес" to "HOSTES",
         "Менеджер" to "MENEJER",
         "Управляющий" to "MUDIR",
+        "Официант" to "OFISIANT",
     )
 
     /** Not in the position list (owner): seeded but inactive, no position. */
