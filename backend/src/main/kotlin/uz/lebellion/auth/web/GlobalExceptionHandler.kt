@@ -11,6 +11,8 @@ import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.multipart.MaxUploadSizeExceededException
 import uz.lebellion.schedule.web.TaskCancelledException
 import uz.lebellion.schedule.web.TaskNotOpenException
+import uz.lebellion.kpi.web.EvaluationFinalizedException
+import uz.lebellion.kpi.web.InvalidAwardException
 import uz.lebellion.review.web.AlreadyReviewedException
 import uz.lebellion.review.web.CannotReviewOwnException
 import uz.lebellion.review.web.CannotScoreOwnException
@@ -67,6 +69,14 @@ class GlobalExceptionHandler {
     @ExceptionHandler(NotScorableException::class)
     fun notScorable(e: NotScorableException) =
         error(HttpStatus.BAD_REQUEST, "NOT_SCORABLE", e.message ?: "Not scorable")
+
+    @ExceptionHandler(EvaluationFinalizedException::class)
+    fun evaluationFinalized(e: EvaluationFinalizedException) =
+        error(HttpStatus.CONFLICT, "EVALUATION_FINALIZED", "Evaluation is finalized")
+
+    @ExceptionHandler(InvalidAwardException::class)
+    fun invalidAward(e: InvalidAwardException) =
+        error(HttpStatus.BAD_REQUEST, "INVALID_AWARD", e.message ?: "Invalid award")
 
     @ExceptionHandler(InvalidCredentialsException::class)
     fun invalidCredentials(e: InvalidCredentialsException) =
